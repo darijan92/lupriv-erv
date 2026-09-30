@@ -1,0 +1,253 @@
+const express = require('express');
+const pool = require('../db/pool');
+const { appendPeriod, parseHm, todayDate, isValidHm } = require('../utils/time');
+
+const router = express.Router();
+
+/** In-memory last successful daily pass (YYYY-MM-DD, server local TZ). Lost on restart. */
+let lastAutoLogoutDate = null;
+
+const NIGHT_START_MINS = 20 * 60; // 20:00 — night-shift threshold
+const FALLBACK_KRAJ_RV = '23:00';
+const FALLBACK_POCETAK_RV = '08:00';
+const AUTO_LOGOUT_NOTE = 'Automatska odjava!';
+const AUTO_LOGOUT_NOTE_NIGHT = 'Automatska odjava (noćna smjena)!';
+
+/**
+ * Shared-secret guard for cron/external POST /api/auto-logout/run.
+ * Accepts header X-Auto-Logout-Secret or query ?secret=
+ * Internal callers (startup / setInterval) use runAutoLogout() directly — no HTTP.
+ */
+function requireAutoLogoutSecret(req, res, next) {
+  const expected = process.env.AUTO_LOGOUT_SECRET;
+  if (!expected || String(expected).trim() === '') {
+    return res.status(503).json({
+      error: 'AUTO_LOGOUT_SECRET nije konfiguriran — HTTP endpoint onemogućen',
+    });
+  }
+  const provided =
+    req.get('x-auto-logout-secret') || // case-insensitive
+    req.query.secret ||
+    (req.body && req.body.secret);
+  if (!provided || provided !== expected) {
+    return res.status(401).json({ error: 'Neautorizirano' });
+  }
+  return next();
+}
+
+function isNightStart(tempHm) {
+  if (!tempHm) return false;
+  try {
+    return parseHm(tempHm) >= NIGHT_START_MINS;
+  } catch {
+    return false;
+  }
+}
+
+/** Normalize hours.datum (DATE string or Date) to YYYY-MM-DD. */
+function toDateStr(datum) {
+  if (datum == null || datum === '') return null;
+  if (datum instanceof Date && !Number.isNaN(datum.getTime())) {
+    return `${datum.getFullYear()}-${String(datum.getMonth() + 1).padStart(2, '0')}-${String(datum.getDate()).padStart(2, '0')}`;
+  }
+  const s = String(datum).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  return null;
+}
+
+/**
+ * Classify an open hours row for the daily auto-logout pass.
+ * @returns {'day'|'night_today'|'night_previous'}
+ */
+function classifyOpenSession(hour, today) {
+  if (!isNightStart(hour.temp)) return 'day';
+  const d = toDateStr(hour.datum);
+  if (d && d < today) return 'night_previous';
+  // Same calendar day as run, or unknown datum → leave open (tonight's shift).
+  return 'night_today';
+}
+
+/** Trimmed HH:mm value, or `fallback` when missing/invalid. */
+function resolveHmOrFallback(value, fallback) {
+  const raw = value == null ? '' : String(value).trim();
+  if (isValidHm(raw)) return { end: raw, usedFallback: false };
+  return { end: fallback, usedFallback: true };
+}
+
+/**
+ * Branch regular work start for deferred night checkout (morning after start).
+ * Missing/invalid pocetak_rv → 08:00 fallback.
+ */
+function resolveNightEndHm(pocetakRv) {
+  return resolveHmOrFallback(pocetakRv, FALLBACK_POCETAK_RV);
+}
+
+/**
+ * Branch regular work end for day-shift auto-logout (same calendar day as hours.datum).
+ * Missing/invalid kraj_rv → 23:00 fallback.
+ * Stored as HH:mm via appendPeriod; day shifts normally have end > start (same day).
+ */
+function resolveDayEndHm(krajRv) {
+  return resolveHmOrFallback(krajRv, FALLBACK_KRAJ_RV);
+}
+
+async function closeHour({ hour, endStr, note, logContent }) {
+  const radni = appendPeriod(hour.radni_sati, hour.temp, endStr);
+  const nap = `${note}${hour.napomena ? ` ${hour.napomena}` : ''}`.trim();
+  await pool.query('UPDATE hours SET radni_sati=?, temp=NULL, napomena=? WHERE id=?', [
+    radni,
+    nap,
+    hour.id,
+  ]);
+  await pool.query(
+    `INSERT INTO logs (datum, user_id, branch_id, hour_id, content) VALUES (NOW(),?,?,?,?)`,
+    [hour.user_id, hour.branch_id, hour.id, logContent]
+  );
+}
+
+function skippedResult(reason) {
+  return {
+    closed: 0,
+    closedDay: 0,
+    closedNight: 0,
+    skippedNight: 0,
+    fallbackPocetak: 0,
+    fallbackKraj: 0,
+    skipped: true,
+    reason,
+  };
+}
+
+/**
+ * Run auto-logout.
+ * - Scheduled (force=false): only when local time >= 23:00 and not already run today.
+ * - Forced (HTTP/cron): always attempt; same classification rules.
+ *
+ * Rules (open temp):
+ *   A) Day (start < 20:00): close end = branch kraj_rv (session's branch_id);
+ *      fallback 23:00 if missing/invalid. Napomena Automatska odjava!
+ *   B) Night started today (start >= 20:00, datum === today): skip.
+ *   C) Night started previous day (start >= 20:00, datum < today): close end = branch
+ *      pocetak_rv on morning after start (stored as overnight HH:mm pair); fallback 08:00.
+ *
+ * @param {{ force?: boolean }} opts
+ * @returns {Promise<{
+ *   closed: number,
+ *   closedDay: number,
+ *   closedNight: number,
+ *   skippedNight: number,
+ *   fallbackPocetak: number,
+ *   fallbackKraj: number,
+ *   skipped: boolean,
+ *   reason?: string
+ * }>}
+ */
+async function runAutoLogout(opts = {}) {
+  const force = Boolean(opts.force);
+  const now = new Date();
+  const today = todayDate();
+  const nowMins = now.getHours() * 60 + now.getMinutes();
+
+  if (!force) {
+    if (nowMins < 23 * 60) return skippedResult('before_23');
+    if (lastAutoLogoutDate === today) return skippedResult('already_ran');
+  }
+
+  const [hours] = await pool.query(
+    `SELECT h.*, b.pocetak_rv AS branch_pocetak_rv, b.kraj_rv AS branch_kraj_rv
+     FROM hours h
+     LEFT JOIN branches b ON b.id = h.branch_id
+     WHERE h.temp IS NOT NULL`
+  );
+
+  let closedDay = 0;
+  let closedNight = 0;
+  let skippedNight = 0;
+  let fallbackPocetak = 0;
+  let fallbackKraj = 0;
+
+  for (const hour of hours) {
+    const kind = classifyOpenSession(hour, today);
+
+    if (kind === 'night_today') {
+      skippedNight += 1;
+      continue;
+    }
+
+    if (kind === 'night_previous') {
+      const { end, usedFallback } = resolveNightEndHm(hour.branch_pocetak_rv);
+      if (usedFallback) fallbackPocetak += 1;
+      await closeHour({
+        hour,
+        endStr: end,
+        note: AUTO_LOGOUT_NOTE_NIGHT,
+        logContent: AUTO_LOGOUT_NOTE_NIGHT,
+      });
+      closedNight += 1;
+      continue;
+    }
+
+    // day — end = that branch's kraj_rv (same calendar day as hours.datum)
+    const { end, usedFallback } = resolveDayEndHm(hour.branch_kraj_rv);
+    if (usedFallback) fallbackKraj += 1;
+    await closeHour({
+      hour,
+      endStr: end,
+      note: AUTO_LOGOUT_NOTE,
+      logContent: AUTO_LOGOUT_NOTE,
+    });
+    closedDay += 1;
+  }
+
+  // Mark daily pass done (scheduled always; force only if already past 23:00)
+  if (!force || nowMins >= 23 * 60) {
+    lastAutoLogoutDate = today;
+  }
+
+  return {
+    closed: closedDay + closedNight,
+    closedDay,
+    closedNight,
+    skippedNight,
+    fallbackPocetak,
+    fallbackKraj,
+    skipped: false,
+  };
+}
+
+router.post('/run', requireAutoLogoutSecret, async (_req, res) => {
+  try {
+    const result = await runAutoLogout({ force: true });
+    res.json({
+      success: true,
+      closed: result.closed,
+      closedDay: result.closedDay,
+      closedNight: result.closedNight,
+      skippedNight: result.skippedNight,
+      fallbackPocetak: result.fallbackPocetak,
+      fallbackKraj: result.fallbackKraj,
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Greška' });
+  }
+});
+
+module.exports = {
+  router,
+  runAutoLogout,
+  requireAutoLogoutSecret,
+  classifyOpenSession,
+  resolveNightEndHm,
+  resolveDayEndHm,
+  toDateStr,
+  isNightStart,
+  NIGHT_START_MINS,
+  FALLBACK_POCETAK_RV,
+  FALLBACK_KRAJ_RV,
+  AUTO_LOGOUT_NOTE,
+  AUTO_LOGOUT_NOTE_NIGHT,
+  _resetLastAutoLogoutDateForTests() {
+    lastAutoLogoutDate = null;
+  },
+};

@@ -1,0 +1,18 @@
+# Caddy reverse proxy in front of the Docker `web` service.
+# Replace your.domain with the real hostname; Caddy obtains HTTPS automatically.
+#
+# Option A — Caddy on the host, app stack publishes 8080:
+#   reverse_proxy localhost:8080
+#
+# Option B — Caddy in Docker on the same network (see docker-compose.caddy.yml):
+#   reverse_proxy web:80
+
+your.domain {
+	encode gzip
+	reverse_proxy localhost:8080
+}
+
+# Optional www redirect:
+# www.your.domain {
+# 	redir https://your.domain{uri}
+# }

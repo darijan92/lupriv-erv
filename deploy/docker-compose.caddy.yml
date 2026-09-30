@@ -1,0 +1,28 @@
+# Optional: run Caddy next to the app stack (same Docker network).
+# Prerequisites: copy this next to a real Caddyfile (from Caddyfile.example),
+# set DOMAIN, and ensure ports 80/443 are free on the host.
+#
+#   cp deploy/Caddyfile.example deploy/Caddyfile
+#   # edit DOMAIN / reverse_proxy web:80
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.caddy.yml up -d
+#
+# Prefer host-installed Caddy on small VPS if you already use it for other sites.
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: lupriv_new_caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,33 @@
+# Local-dev overrides: publish MySQL/API ports + phpMyAdmin.
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d mysql phpmyadmin
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -d
+#
+# Do NOT use this file on a public VPS.
+
+services:
+  mysql:
+    ports:
+      - "3307:3306"
+
+  api:
+    ports:
+      - "3001:3001"
+    environment:
+      # Host Vite / local debugging often needs these origins
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080,http://localhost:5173,http://localhost:5175}
+      KIOSK_ALLOW_BRANCH_QUERY: ${KIOSK_ALLOW_BRANCH_QUERY:-1}
+
+  phpmyadmin:
+    image: phpmyadmin:5
+    container_name: lupriv_new_pma
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      PMA_HOST: mysql
+      PMA_USER: root
+      PMA_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass}
+    ports:
+      - "8082:80"
