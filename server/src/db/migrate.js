@@ -11,6 +11,34 @@ async function addIndexIfMissing(conn, table, name, columns) {
   }
 }
 
+async function addColumnIfMissing(conn, table, column, definition) {
+  const [rows] = await conn.query(
+    `SELECT COUNT(*) AS n FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+    [table, column]
+  );
+  if (Number(rows[0].n) === 0) {
+    await conn.query(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+
+/**
+ * Recreate a foreign key when its ON DELETE rule differs from `deleteRule`
+ * (e.g. turn CASCADE into RESTRICT so deleting a user/branch can't wipe hours).
+ */
+async function ensureForeignKeyRule(conn, { table, name, column, refTable, deleteRule }) {
+  const [rows] = await conn.query(
+    `SELECT DELETE_RULE AS rule FROM information_schema.REFERENTIAL_CONSTRAINTS
+     WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = ? AND CONSTRAINT_NAME = ?`,
+    [table, name]
+  );
+  if (rows[0] && rows[0].rule === deleteRule) return;
+  if (rows[0]) await conn.query(`ALTER TABLE ${table} DROP FOREIGN KEY ${name}`);
+  await conn.query(
+    `ALTER TABLE ${table} ADD CONSTRAINT ${name} FOREIGN KEY (${column}) REFERENCES ${refTable}(id) ON DELETE ${deleteRule}`
+  );
+}
+
 async function migrate() {
   const conn = await pool.getConnection();
   try {
@@ -148,6 +176,23 @@ async function migrate() {
     // Month views filter hours by (user_id | branch_id) + datum range.
     await addIndexIfMissing(conn, 'hours', 'hours_user_datum_idx', 'user_id, datum');
     await addIndexIfMissing(conn, 'hours', 'hours_branch_datum_idx', 'branch_id, datum');
+
+    // Attendance history must never disappear with a user or branch delete.
+    await ensureForeignKeyRule(conn, {
+      table: 'hours', name: 'hours_user_id_foreign', column: 'user_id', refTable: 'users', deleteRule: 'RESTRICT',
+    });
+    await ensureForeignKeyRule(conn, {
+      table: 'hours', name: 'hours_branch_id_foreign', column: 'branch_id', refTable: 'branches', deleteRule: 'RESTRICT',
+    });
+
+    // Room for more check-in/out pairs per day (VARCHAR(100) held ~8 pairs).
+    await conn.query('ALTER TABLE hours MODIFY radni_sati VARCHAR(255) NULL');
+
+    // Migrated/admin-set passwords must be changed by the employee.
+    await addColumnIfMissing(conn, 'users', 'must_change_password', 'TINYINT(1) NOT NULL DEFAULT 0');
+
+    await addIndexIfMissing(conn, 'logs', 'logs_datum_idx', 'datum');
+    await addIndexIfMissing(conn, 'hours', 'hours_open_idx', 'user_id, temp');
 
     console.log('Migracija uspješna / Migration OK');
 

@@ -1,6 +1,9 @@
 const express = require('express');
 const pool = require('../db/pool');
+const crypto = require('crypto');
 const { appendPeriod, parseHm, todayDate, isValidHm } = require('../utils/time');
+const { autoLogoutExtraMinutes } = require('../config');
+const { formatHm } = require('../utils/prekid');
 
 const router = express.Router();
 
@@ -12,10 +15,19 @@ const FALLBACK_KRAJ_RV = '23:00';
 const FALLBACK_POCETAK_RV = '08:00';
 const AUTO_LOGOUT_NOTE = 'Automatska odjava!';
 const AUTO_LOGOUT_NOTE_NIGHT = 'Automatska odjava (noćna smjena)!';
+const AUTO_LOGOUT_NOTE_AFTER_CLOSE = 'Automatska odjava (prijava nakon kraja RV, provjeriti)!';
+const LATEST_DAY_END_MINS = 23 * 60 + 59;
+
+function safeEqual(a, b) {
+  const ab = Buffer.from(String(a));
+  const bb = Buffer.from(String(b));
+  return ab.length === bb.length && crypto.timingSafeEqual(ab, bb);
+}
 
 /**
  * Shared-secret guard for cron/external POST /api/auto-logout/run.
- * Accepts header X-Auto-Logout-Secret or query ?secret=
+ * Accepts header X-Auto-Logout-Secret or JSON body { secret } (not the query string,
+ * which ends up in access logs).
  * Internal callers (startup / setInterval) use runAutoLogout() directly — no HTTP.
  */
 function requireAutoLogoutSecret(req, res, next) {
@@ -27,9 +39,8 @@ function requireAutoLogoutSecret(req, res, next) {
   }
   const provided =
     req.get('x-auto-logout-secret') || // case-insensitive
-    req.query.secret ||
     (req.body && req.body.secret);
-  if (!provided || provided !== expected) {
+  if (!provided || !safeEqual(provided, expected)) {
     return res.status(401).json({ error: 'Neautorizirano' });
   }
   return next();
@@ -87,22 +98,59 @@ function resolveNightEndHm(pocetakRv) {
  * Missing/invalid kraj_rv → 23:00 fallback.
  * Stored as HH:mm via appendPeriod; day shifts normally have end > start (same day).
  */
-function resolveDayEndHm(krajRv) {
-  return resolveHmOrFallback(krajRv, FALLBACK_KRAJ_RV);
+function resolveDayEndHm(krajRv, extraMinutes = autoLogoutExtraMinutes()) {
+  const base = resolveHmOrFallback(krajRv, FALLBACK_KRAJ_RV);
+  if (!extraMinutes) return base;
+  // Old app: kraj_rv + 1h, capped at 23:59.
+  const mins = Math.min(parseHm(base.end) + extraMinutes, LATEST_DAY_END_MINS);
+  return { end: formatHm(mins), usedFallback: base.usedFallback };
+}
+
+/**
+ * Decide how to close one open session (pure, for tests).
+ * @returns {{ kind: 'day'|'night_today'|'night_previous', endStr?: string, note?: string,
+ *             usedFallback?: boolean, afterClose?: boolean }}
+ */
+function planClose(hour, today, extraMinutes = autoLogoutExtraMinutes()) {
+  const kind = classifyOpenSession(hour, today);
+  if (kind === 'night_today') return { kind };
+  if (kind === 'night_previous') {
+    const { end, usedFallback } = resolveNightEndHm(hour.branch_pocetak_rv);
+    return { kind, endStr: end, note: AUTO_LOGOUT_NOTE_NIGHT, usedFallback };
+  }
+  const { end, usedFallback } = resolveDayEndHm(hour.branch_kraj_rv, extraMinutes);
+  // Checked in at or after the branch's closing time: closing at kraj_rv would read as an
+  // overnight pair (e.g. 15:10–14:00 = 22:50 h). Record zero time and flag it for review.
+  if (isValidHm(hour.temp) && parseHm(end) <= parseHm(hour.temp)) {
+    return { kind, endStr: hour.temp, note: AUTO_LOGOUT_NOTE_AFTER_CLOSE, usedFallback, afterClose: true };
+  }
+  return { kind, endStr: end, note: AUTO_LOGOUT_NOTE, usedFallback };
 }
 
 async function closeHour({ hour, endStr, note, logContent }) {
   const radni = appendPeriod(hour.radni_sati, hour.temp, endStr);
   const nap = `${note}${hour.napomena ? ` ${hour.napomena}` : ''}`.trim();
-  await pool.query('UPDATE hours SET radni_sati=?, temp=NULL, napomena=? WHERE id=?', [
-    radni,
-    nap,
-    hour.id,
-  ]);
-  await pool.query(
-    `INSERT INTO logs (datum, user_id, branch_id, hour_id, content) VALUES (NOW(),?,?,?,?)`,
-    [hour.user_id, hour.branch_id, hour.id, logContent]
-  );
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    // temp IS NOT NULL guard: skip if the employee checked out meanwhile.
+    const [r] = await conn.query(
+      'UPDATE hours SET radni_sati=?, temp=NULL, napomena=? WHERE id=? AND temp IS NOT NULL',
+      [radni, nap, hour.id]
+    );
+    if (r.affectedRows) {
+      await conn.query(
+        `INSERT INTO logs (datum, user_id, branch_id, hour_id, content) VALUES (NOW(),?,?,?,?)`,
+        [hour.user_id, hour.branch_id ?? 0, hour.id, logContent]
+      );
+    }
+    await conn.commit();
+  } catch (e) {
+    await conn.rollback().catch(() => {});
+    throw e;
+  } finally {
+    conn.release();
+  }
 }
 
 function skippedResult(reason) {
@@ -124,8 +172,9 @@ function skippedResult(reason) {
  * - Forced (HTTP/cron): always attempt; same classification rules.
  *
  * Rules (open temp):
- *   A) Day (start < 20:00): close end = branch kraj_rv (session's branch_id);
+ *   A) Day (start < 20:00): close end = branch kraj_rv (+ AUTO_LOGOUT_EXTRA_MINUTES, max 23:59);
  *      fallback 23:00 if missing/invalid. Napomena Automatska odjava!
+ *      If the session started at/after that end, it is closed with zero time and flagged.
  *   B) Night started today (start >= 20:00, datum === today): skip.
  *   C) Night started previous day (start >= 20:00, datum < today): close end = branch
  *      pocetak_rv on morning after start (stored as overnight HH:mm pair); fallback 08:00.
@@ -167,36 +216,21 @@ async function runAutoLogout(opts = {}) {
   let fallbackKraj = 0;
 
   for (const hour of hours) {
-    const kind = classifyOpenSession(hour, today);
+    const plan = planClose(hour, today);
 
-    if (kind === 'night_today') {
+    if (plan.kind === 'night_today') {
       skippedNight += 1;
       continue;
     }
 
-    if (kind === 'night_previous') {
-      const { end, usedFallback } = resolveNightEndHm(hour.branch_pocetak_rv);
-      if (usedFallback) fallbackPocetak += 1;
-      await closeHour({
-        hour,
-        endStr: end,
-        note: AUTO_LOGOUT_NOTE_NIGHT,
-        logContent: AUTO_LOGOUT_NOTE_NIGHT,
-      });
+    if (plan.kind === 'night_previous') {
+      if (plan.usedFallback) fallbackPocetak += 1;
       closedNight += 1;
-      continue;
+    } else {
+      if (plan.usedFallback) fallbackKraj += 1;
+      closedDay += 1;
     }
-
-    // day — end = that branch's kraj_rv (same calendar day as hours.datum)
-    const { end, usedFallback } = resolveDayEndHm(hour.branch_kraj_rv);
-    if (usedFallback) fallbackKraj += 1;
-    await closeHour({
-      hour,
-      endStr: end,
-      note: AUTO_LOGOUT_NOTE,
-      logContent: AUTO_LOGOUT_NOTE,
-    });
-    closedDay += 1;
+    await closeHour({ hour, endStr: plan.endStr, note: plan.note, logContent: plan.note });
   }
 
   // Mark daily pass done (scheduled always; force only if already past 23:00)
@@ -238,6 +272,7 @@ module.exports = {
   runAutoLogout,
   requireAutoLogoutSecret,
   classifyOpenSession,
+  planClose,
   resolveNightEndHm,
   resolveDayEndHm,
   toDateStr,
@@ -247,6 +282,7 @@ module.exports = {
   FALLBACK_KRAJ_RV,
   AUTO_LOGOUT_NOTE,
   AUTO_LOGOUT_NOTE_NIGHT,
+  AUTO_LOGOUT_NOTE_AFTER_CLOSE,
   _resetLastAutoLogoutDateForTests() {
     lastAutoLogoutDate = null;
   },

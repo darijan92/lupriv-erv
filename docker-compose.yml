@@ -50,6 +50,15 @@ services:
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080}
       KIOSK_ALLOW_BRANCH_QUERY: ${KIOSK_ALLOW_BRANCH_QUERY:-0}
       AUTO_LOGOUT_SECRET: ${AUTO_LOGOUT_SECRET:-change_me_auto_logout_secret}
+      # The API refuses to start with the default secrets above (NODE_ENV=production).
+      # Local prod-like testing only: ALLOW_INSECURE_DEFAULTS=1 in .env.
+      ALLOW_INSECURE_DEFAULTS: ${ALLOW_INSECURE_DEFAULTS:-0}
+      # Reverse proxies in front of the API: web nginx = 1; Caddy → web nginx = 2.
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
+      # Voditelji may edit the previous month until this day of the month (0 = no lock).
+      HOURS_EDIT_LOCK_DAY: ${HOURS_EDIT_LOCK_DAY:-5}
+      # Minutes added to branch kraj_rv when auto-logout closes a forgotten day session (old app: 60).
+      AUTO_LOGOUT_EXTRA_MINUTES: ${AUTO_LOGOUT_EXTRA_MINUTES:-0}
     # API not published on host by default (reach via web nginx /api/).
     # Expose 3001 with docker-compose.dev.yml when debugging.
     healthcheck:
@@ -73,7 +82,9 @@ services:
       api:
         condition: service_healthy
     ports:
-      - "8080:80"
+      # Loopback only: reach it via Caddy (or http://localhost:8080 locally). Exposing 8080
+      # publicly would bypass HTTPS and let clients spoof X-Forwarded-For.
+      - "${WEB_BIND:-127.0.0.1}:8080:80"
     # On VPS: Caddy/host nginx → this container (or map 80/443 → web).
     # Local/prod-behind-caddy testing: http://localhost:8080
 

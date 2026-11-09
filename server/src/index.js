@@ -4,7 +4,17 @@ require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 const morgan = require('morgan');
+const { assertSafeConfig, trustProxyHops } = require('./config');
+
+// Refuse to start in production with missing or publicly known secrets.
+try {
+  assertSafeConfig();
+} catch (e) {
+  console.error(e.message);
+  process.exit(1);
+}
 
 const authRoutes = require('./routes/auth');
 const kioskRoutes = require('./routes/kiosk');
@@ -22,8 +32,12 @@ const corsOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173')
   .split(',')
   .map((origin) => origin.trim());
 
-app.use(morgan('dev'));
-app.use(express.json());
+// nginx (web container) = 1 hop; Caddy in front of it = 2. Only these hops may set X-Forwarded-For.
+app.set('trust proxy', trustProxyHops());
+app.disable('x-powered-by');
+app.use(helmet());
+app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
+app.use(express.json({ limit: '200kb' }));
 app.use(
   cors({
     origin: corsOrigins,
@@ -46,6 +60,8 @@ app.use('/api/moderator', moderatorRoutes);
 app.use('/api/auto-logout', autoLogoutRoutes);
 
 app.use((err, _req, res, _next) => {
+  if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Neispravan JSON' });
+  if (err.type === 'entity.too.large') return res.status(413).json({ error: 'Zahtjev je prevelik' });
   console.error(err);
   res.status(500).json({ error: 'Greška na serveru' });
 });

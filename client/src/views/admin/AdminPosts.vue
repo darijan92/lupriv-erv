@@ -10,7 +10,7 @@
       <div v-for="p in posts" :key="p.id" style="margin-bottom:1rem;border-bottom:1px solid #eee;padding-bottom:0.75rem">
         <strong>{{ p.naslov }}</strong>
         <div class="muted">{{ p.ime }} {{ p.prezime }} · {{ formatDate(p.created_at) }}</div>
-        <div class="post-body" v-html="p.sadrzaj"></div>
+        <div class="post-body" v-html="safeHtml(p.sadrzaj)"></div>
         <div class="actions">
           <button class="secondary" @click="openEdit(p)">Uredi</button>
           <button class="danger" @click="remove(p)">Obriši</button>
@@ -39,6 +39,7 @@
 </template>
 
 <script setup>
+import { safeHtml } from '../../utils/safeHtml'
 import { ref, onMounted } from 'vue'
 import api from '../../api'
 import AppModal from '../../components/AppModal.vue'

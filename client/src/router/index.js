@@ -4,6 +4,7 @@ import { useAuthStore } from '../stores/auth'
 const routes = [
   { path: '/', name: 'kiosk', component: () => import('../views/KioskView.vue') },
   { path: '/login', name: 'login', component: () => import('../views/LoginView.vue') },
+  { path: '/change-password', name: 'change-password', component: () => import('../views/ChangePasswordView.vue'), meta: { auth: true } },
   { path: '/employee/:id', name: 'employee', component: () => import('../views/EmployeeHoursView.vue'), meta: { auth: true } },
   { path: '/moderator', name: 'moderator', component: () => import('../views/ModeratorView.vue'), meta: { auth: true, mod: true } },
   { path: '/moderator/hours/:id', name: 'mod-hours', component: () => import('../views/EmployeeHoursView.vue'), meta: { auth: true, mod: true } },
@@ -31,6 +32,9 @@ const router = createRouter({
 router.beforeEach((to) => {
   const auth = useAuthStore()
   if (to.meta.auth && !auth.isLoggedIn) return { name: 'login', query: { redirect: to.fullPath } }
+  if (auth.isLoggedIn && auth.mustChangePassword && to.meta.auth && to.name !== 'change-password') {
+    return { name: 'change-password' }
+  }
   if (to.meta.admin && !auth.isAdmin) return { name: 'login' }
   if (to.meta.mod && !(auth.isModerator || auth.isAdmin)) return { name: 'login' }
   // Ordinary employees may only view their own monthly hours (no IDOR via URL)

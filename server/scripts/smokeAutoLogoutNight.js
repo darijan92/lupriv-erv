@@ -3,7 +3,6 @@
  * Run: node scripts/smokeAutoLogoutNight.js
  */
 const assert = require('assert');
-const path = require('path');
 
 // Load helpers without hitting DB for classify/resolve
 const {

@@ -82,7 +82,7 @@
           <div v-for="p in posts" :key="p.id" style="margin-bottom:1rem">
             <strong>{{ p.naslov }}</strong>
             <div class="muted" style="font-size:0.85rem">{{ formatDate(p.created_at) }}</div>
-            <div class="post-body" v-html="p.sadrzaj"></div>
+            <div class="post-body" v-html="safeHtml(p.sadrzaj)"></div>
           </div>
         </div>
       </template>
@@ -91,6 +91,7 @@
 </template>
 
 <script setup>
+import { safeHtml } from '../utils/safeHtml'
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../api'

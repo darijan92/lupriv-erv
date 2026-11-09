@@ -33,6 +33,15 @@ async function main() {
 
   const conn = await pool.getConnection();
   try {
+    // A dump imported after the API's start-up migration lacks this column.
+    const [[col]] = await conn.query(
+      `SELECT COUNT(*) AS n FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'must_change_password'`
+    );
+    if (Number(col.n) === 0) {
+      await conn.query('ALTER TABLE users ADD COLUMN must_change_password TINYINT(1) NOT NULL DEFAULT 0');
+    }
+
     const [rows] = await conn.query(
       'SELECT id, password FROM users ORDER BY id ASC'
     );
@@ -56,7 +65,8 @@ async function main() {
         const plain = String(password);
         const hash = await bcrypt.hash(plain, BCRYPT_ROUNDS);
         const [result] = await conn.query(
-          'UPDATE users SET password = ? WHERE id = ? AND (password NOT LIKE ? OR password IS NULL)',
+          // Legacy plaintext passwords (often shared defaults) must be changed at next login.
+          'UPDATE users SET password = ?, must_change_password = 1 WHERE id = ? AND (password NOT LIKE ? OR password IS NULL)',
           [hash, id, '$2%']
         );
         if (result.affectedRows === 1) {

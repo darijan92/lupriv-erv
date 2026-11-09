@@ -99,7 +99,7 @@
             </select>
           </div>
           <label style="display: flex; gap: 0.5rem; align-items: center"
-            ><input type="checkbox" v-model="form.rad_nedjeljom" style="width: auto" /> Rad
+            ><input v-model="form.rad_nedjeljom" type="checkbox" style="width: auto" /> Rad
             nedjeljom</label
           >
         </div>

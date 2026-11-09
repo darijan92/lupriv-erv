@@ -12,7 +12,7 @@
       <p class="muted">Sesije s napomenom „Automatska odjava!“ / „Automatska odjava (noćna smjena)!“ (jednom dnevno nakon 23:00). Dnevne smjene (&lt; 20:00) zatvaraju se na <code>kraj_rv</code> poslovnice u kojoj je radnik radio (fallback 23:00); noćne (≥ 20:00) se istog dana preskaču, a sljedeće večeri — ako još otvorene — zatvaraju se na jutarnji <code>pocetak_rv</code> poslovnice (fallback 08:00). Excel izvještaj: broj po zaposleniku (ukupno / tekući / prošli mjesec) — izvoz uključuje cijeli skup, ne samo trenutnu stranicu.</p>
       <div v-if="msg" class="alert success">{{ msg }}</div>
       <div v-if="error" class="alert error">{{ error }}</div>
-      <p class="muted" v-if="total">{{ total }} ukupno</p>
+      <p v-if="total" class="muted">{{ total }} ukupno</p>
       <table>
         <thead><tr><th>Datum</th><th>Korisnik</th><th>OJ</th><th>Sati</th><th>Napomena</th></tr></thead>
         <tbody>
@@ -26,7 +26,7 @@
         </tbody>
       </table>
       <p v-if="!hours.length" class="muted">Nema automatskih odjava.</p>
-      <div class="pagination" v-if="totalPages > 1">
+      <div v-if="totalPages > 1" class="pagination">
         <button type="button" class="secondary" :disabled="page <= 1" @click="goPage(page - 1)">Prethodna</button>
         <span class="muted">Stranica {{ page }} od {{ totalPages }} ({{ total }} ukupno)</span>
         <button type="button" class="secondary" :disabled="page >= totalPages" @click="goPage(page + 1)">Sljedeća</button>

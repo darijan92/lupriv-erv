@@ -1,6 +1,6 @@
 const pool = require('../db/pool');
 const { buildMonthView, NIGHT_LABEL } = require('./hoursCalc');
-const { isValidHm, nowTime, appendPeriod } = require('../utils/time');
+const { isValidHm, nowTime, appendPeriod, normalizeRadniSati } = require('../utils/time');
 const { nullsLastOrder } = require('../utils/sqlSort');
 
 function badRequest(message, status = 400) {
@@ -8,6 +8,9 @@ function badRequest(message, status = 400) {
   err.status = status;
   return err;
 }
+
+/** Longest absence range accepted in one request (guards against typos like 2026 → 2062). */
+const MAX_ABSENCE_DAYS = 366;
 
 function eventExistsError(dateStr) {
   return badRequest(`Greška, na datum ${dateStr} postoji događaj.`);
@@ -130,6 +133,10 @@ async function createAbsenceRange({
   const start = parseYmd(pocetak);
   const end = parseYmd(kraj);
   if (start > end) throw badRequest('Nepravilno uneseni datumi');
+  const spanDays = Math.round((end - start) / 86400000) + 1;
+  if (spanDays > MAX_ABSENCE_DAYS) {
+    throw badRequest(`Odsustvo može obuhvatiti najviše ${MAX_ABSENCE_DAYS} dana`);
+  }
 
   const dates = [];
   for (let d = new Date(start.getTime()); d <= end; d.setDate(d.getDate() + 1)) {
@@ -204,8 +211,23 @@ async function createDayHours({
   return { id: r.insertId, success: 'Uspješno dodani radni sati' };
 }
 
+async function getHour(id) {
+  const [rows] = await pool.query('SELECT * FROM hours WHERE id=?', [id]);
+  return rows[0] || null;
+}
+
+/**
+ * Partial update: only fields present in `body` are changed, so an omitted `temp`
+ * can no longer silently close (and lose) an active session.
+ */
 async function updateHours(id, body) {
-  let radni_sati = body.radni_sati;
+  const sets = [];
+  const vals = [];
+  const set = (col, val) => {
+    sets.push(`${col}=?`);
+    vals.push(val);
+  };
+
   if (Array.isArray(body.intervals)) {
     const parts = [];
     for (const iv of body.intervals) {
@@ -215,39 +237,75 @@ async function updateHours(id, body) {
       }
       parts.push(iv.start, iv.end);
     }
-    radni_sati = parts.length ? parts.join(' ') : null;
-  } else if (typeof radni_sati === 'string') {
-    radni_sati = radni_sati.trim() || null;
+    set('radni_sati', parts.length ? parts.join(' ') : null);
+  } else if (body.radni_sati !== undefined) {
+    try {
+      set('radni_sati', normalizeRadniSati(body.radni_sati));
+    } catch (e) {
+      throw badRequest(e.message);
+    }
   }
 
-  let odsustvo = body.odsustvo ?? null;
-  if (body.nocni_rad) odsustvo = NIGHT_LABEL;
+  if (body.temp !== undefined) {
+    const temp = body.temp === '' ? null : body.temp;
+    if (temp !== null && !isValidHm(temp)) throw badRequest('Aktivno vrijeme mora biti HH:mm');
+    set('temp', temp);
+  }
+  if (body.nocni_rad) set('odsustvo', NIGHT_LABEL);
+  else if (body.odsustvo !== undefined) set('odsustvo', body.odsustvo || null);
+  if (body.odsustvo_time !== undefined) {
+    const t = body.odsustvo_time || null;
+    if (t !== null && !/^\d{1,2}:[0-5]\d$/.test(t)) throw badRequest('Trajanje odsustva mora biti HH:mm');
+    set('odsustvo_time', t);
+  }
+  if (body.napomena !== undefined) set('napomena', body.napomena || null);
+  if (body.branch_id !== undefined) set('branch_id', body.branch_id || null);
 
-  await pool.query(
-    `UPDATE hours SET radni_sati=?, branch_id=?, odsustvo=?, odsustvo_time=?, napomena=?, temp=? WHERE id=?`,
-    [
-      radni_sati ?? null,
-      body.branch_id ?? null,
-      odsustvo,
-      body.odsustvo_time ?? null,
-      body.napomena ?? null,
-      body.temp === undefined ? null : body.temp,
-      id,
-    ]
-  );
+  if (!sets.length) throw badRequest('Nema podataka za spremanje');
+  vals.push(id);
+  await pool.query(`UPDATE hours SET ${sets.join(', ')} WHERE id=?`, vals);
   return { success: 'Sati ažurirani' };
 }
 
+/**
+ * Run `fn(conn)` in a transaction holding a row lock on the user, so two quick
+ * check-ins/outs for the same person cannot interleave (no duplicate open sessions).
+ */
+async function withUserLock(userId, fn) {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    await conn.query('SELECT id FROM users WHERE id=? FOR UPDATE', [userId]);
+    const result = await fn(conn);
+    await conn.commit();
+    return result;
+  } catch (e) {
+    await conn.rollback().catch(() => {});
+    throw e;
+  } finally {
+    conn.release();
+  }
+}
+
+/** Most recent open session (any date), so overnight shifts can be checked out next morning. */
+async function findOpenSession(userId, conn = pool) {
+  const [rows] = await conn.query(
+    'SELECT * FROM hours WHERE user_id=? AND temp IS NOT NULL ORDER BY datum DESC, id DESC LIMIT 1',
+    [userId]
+  );
+  return rows[0] || null;
+}
+
 /** Start radno vrijeme: reopen today's row for this branch, or insert a new one. */
-async function startWork(userId, branchId, today) {
-  const [existing] = await pool.query(
+async function startWork(userId, branchId, today, conn = pool) {
+  const [existing] = await conn.query(
     'SELECT * FROM hours WHERE datum=? AND user_id=? AND branch_id=?',
     [today, userId, branchId]
   );
   if (existing[0]) {
-    await pool.query('UPDATE hours SET temp=? WHERE id=?', [nowTime(), existing[0].id]);
+    await conn.query('UPDATE hours SET temp=? WHERE id=?', [nowTime(), existing[0].id]);
   } else {
-    await pool.query(
+    await conn.query(
       'INSERT INTO hours (datum, temp, user_id, branch_id) VALUES (?,?,?,?)',
       [today, nowTime(), userId, branchId]
     );
@@ -295,6 +353,10 @@ module.exports = {
   createAbsenceRange,
   createDayHours,
   updateHours,
+  getHour,
+  withUserLock,
+  findOpenSession,
+  MAX_ABSENCE_DAYS,
   deleteHours,
   startWork,
   listActive,

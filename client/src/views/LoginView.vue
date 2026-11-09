@@ -21,7 +21,7 @@
         </select>
       </div>
       <label style="display:flex;gap:0.5rem;align-items:center">
-        <input type="checkbox" v-model="form.start_work" style="width:auto" />
+        <input v-model="form.start_work" type="checkbox" style="width:auto" />
         Započni radno vrijeme
       </label>
       <button type="submit" :disabled="busy">Prijavi se</button>
@@ -42,6 +42,9 @@ const branches = ref([])
 const error = ref('')
 const info = ref('')
 const busy = ref(false)
+if (new URLSearchParams(window.location.search).get('expired')) {
+  error.value = 'Sesija je istekla. Prijavite se ponovno.'
+}
 const form = ref({
   username: '',
   password: '',
@@ -74,6 +77,10 @@ async function submit() {
     const data = await auth.login(payload)
     if (data.success) info.value = data.success
     if (data.warning) info.value = data.warning
+    if (data.mustChangePassword) {
+      router.push('/change-password')
+      return
+    }
     router.push(auth.isAdmin ? '/admin' : '/')
   } catch (e) {
     error.value = e.message

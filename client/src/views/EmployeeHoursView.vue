@@ -4,7 +4,7 @@
       <div class="row" style="justify-content:space-between;align-items:center">
         <div>
           <h1>{{ title }}</h1>
-          <p class="muted" v-if="user">{{ user.ime }} {{ user.prezime }} · {{ user.naziv_oj || '' }}</p>
+          <p v-if="user" class="muted">{{ user.ime }} {{ user.prezime }} · {{ user.naziv_oj || '' }}</p>
         </div>
         <div class="row">
           <div class="field" style="min-width:100px">
@@ -22,7 +22,7 @@
             class="checkbox-label"
             style="align-self:flex-end;margin-bottom:0.35rem"
           >
-            <input type="checkbox" v-model="showPauze" />
+            <input v-model="showPauze" type="checkbox" />
             Prikaži pauze
           </label>
           <button @click="exportExcel">Izvoz Excel</button>
@@ -34,7 +34,7 @@
     <div v-if="error" class="alert error">{{ error }}</div>
     <div v-if="success" class="alert success">{{ success }}</div>
 
-    <div class="card" v-if="canEdit">
+    <div v-if="canEdit" class="card">
       <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:0">
         <h3 style="margin:0">Odsustvo i noćni rad / smjena</h3>
         <div class="row">
@@ -122,8 +122,8 @@
     <AppModal :open="absenceOpen" title="Dodaj odsustvo" @close="closeAbsence">
       <form class="stack" @submit.prevent="addAbsence">
         <div class="row">
-          <div class="field"><label>Od</label><input type="date" v-model="abs.pocetak" required /></div>
-          <div class="field"><label>Do</label><input type="date" v-model="abs.kraj" required /></div>
+          <div class="field"><label>Od</label><input v-model="abs.pocetak" type="date" required /></div>
+          <div class="field"><label>Do</label><input v-model="abs.kraj" type="date" required /></div>
           <div class="field">
             <label>Vrsta</label>
             <select v-model="abs.odsustvo">
@@ -142,11 +142,11 @@
             </select>
           </div>
         </div>
-        <label style="display:flex;gap:.5rem;align-items:center"><input type="checkbox" v-model="abs.skip_saturday" style="width:auto" /> Preskoči subote</label>
-        <label style="display:flex;gap:.5rem;align-items:center"><input type="checkbox" v-model="abs.skip_sunday" style="width:auto" /> Preskoči nedjelje</label>
+        <label style="display:flex;gap:.5rem;align-items:center"><input v-model="abs.skip_saturday" type="checkbox" style="width:auto" /> Preskoči subote</label>
+        <label style="display:flex;gap:.5rem;align-items:center"><input v-model="abs.skip_sunday" type="checkbox" style="width:auto" /> Preskoči nedjelje</label>
         <div class="actions">
           <button type="submit" :disabled="saving">{{ saving ? 'Spremanje…' : 'Spremi odsustvo' }}</button>
-          <button type="button" class="secondary" @click="closeAbsence" :disabled="saving">Odustani</button>
+          <button type="button" class="secondary" :disabled="saving" @click="closeAbsence">Odustani</button>
         </div>
       </form>
     </AppModal>
@@ -155,7 +155,7 @@
       <form class="stack" @submit.prevent="addNightShift">
         <p class="muted">Noćna smjena se upisuje naknadno (ne preko početne stranice). Kraj smije biti manji od početka (npr. 22:00–06:00).</p>
         <div class="row">
-          <div class="field"><label>Datum</label><input type="date" v-model="night.datum" required /></div>
+          <div class="field"><label>Datum</label><input v-model="night.datum" type="date" required /></div>
           <div class="field"><label>Početak</label><input v-model="night.start" placeholder="22:00" pattern="[0-2][0-9]:[0-5][0-9]" /></div>
           <div class="field"><label>Završetak</label><input v-model="night.end" placeholder="06:00" pattern="[0-2][0-9]:[0-5][0-9]" /></div>
           <div class="field">
@@ -168,11 +168,11 @@
         </div>
         <div class="field"><label>Napomena</label><input v-model="night.napomena" placeholder="npr. noćna smjena" /></div>
         <label style="display:flex;gap:.5rem;align-items:center">
-          <input type="checkbox" v-model="night.flatEight" style="width:auto" /> Bez sati — evidentiraj kao 08:00 (stari način)
+          <input v-model="night.flatEight" type="checkbox" style="width:auto" /> Bez sati — evidentiraj kao 08:00 (stari način)
         </label>
         <div class="actions">
           <button type="submit" :disabled="saving">{{ saving ? 'Spremanje…' : 'Spremi noćnu smjenu' }}</button>
-          <button type="button" class="secondary" @click="closeNight" :disabled="saving">Odustani</button>
+          <button type="button" class="secondary" :disabled="saving" @click="closeNight">Odustani</button>
         </div>
       </form>
     </AppModal>
@@ -191,7 +191,7 @@
               <span class="period-idx" title="Period">{{ idx + 1 }}</span>
               <div class="period-times">
                 <label>Početak</label>
-                <input type="time" v-model="p.start" step="60" />
+                <input v-model="p.start" type="time" step="60" />
               </div>
               <span class="period-sep" aria-hidden="true">–</span>
               <div class="period-times">
@@ -199,7 +199,7 @@
                   Kraj
                   <span v-if="idx === editForm.periods.length - 1" class="muted"> (opcionalno)</span>
                 </label>
-                <input type="time" v-model="p.end" step="60" />
+                <input v-model="p.end" type="time" step="60" />
               </div>
               <button
                 type="button"
@@ -225,12 +225,12 @@
           <div class="field"><label>Napomena</label><input v-model="editForm.napomena" /></div>
         </div>
         <label style="display:flex;gap:.5rem;align-items:center">
-          <input type="checkbox" v-model="editForm.nocni_rad" style="width:auto" /> Označi kao Noćni rad
+          <input v-model="editForm.nocni_rad" type="checkbox" style="width:auto" /> Označi kao Noćni rad
         </label>
         <div class="actions">
           <button type="submit" :disabled="saving">{{ saving ? 'Spremanje…' : 'Spremi' }}</button>
-          <button type="button" class="secondary" @click="closeEdit" :disabled="saving">Odustani</button>
-          <button v-if="auth.isAdmin" type="button" class="danger" @click="removeEdit" :disabled="saving">Obriši</button>
+          <button type="button" class="secondary" :disabled="saving" @click="closeEdit">Odustani</button>
+          <button v-if="auth.isAdmin" type="button" class="danger" :disabled="saving" @click="removeEdit">Obriši</button>
         </div>
       </form>
     </AppModal>
@@ -253,7 +253,10 @@ const { download } = useDownload()
 const { error, success, setError, setSuccess } = useFlash()
 
 const userId = computed(() => Number(route.params.id || auth.user?.id))
-const canEdit = computed(() => auth.isAdmin || auth.isModerator)
+// Voditelji manage their branch's employees but not their own hours (admin does that).
+const canEdit = computed(
+  () => auth.isAdmin || (auth.isModerator && Number(userId.value) !== Number(auth.user?.id))
+)
 const title = computed(() => (canEdit.value ? 'Pregled sati' : 'Moji sati'))
 /** Admin-only toggle; employees/voditelj never see Prekid in UI. */
 const showPauze = ref(false)
