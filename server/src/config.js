@@ -76,6 +76,12 @@ function autoLogoutExtraMinutes(env = process.env) {
   return Number.isInteger(n) && n >= 0 && n <= 6 * 60 ? n : 0;
 }
 
+/** An open session older than this (and from an earlier date) is treated as a forgotten check-out. */
+function maxOpenSessionHours(env = process.env) {
+  const n = Number(env.MAX_OPEN_SESSION_HOURS ?? 16);
+  return Number.isFinite(n) && n >= 8 && n <= 48 ? n : 16;
+}
+
 module.exports = {
   KNOWN_DEFAULT_SECRETS,
   MIN_SECRET_LENGTH,
@@ -86,4 +92,5 @@ module.exports = {
   trustProxyHops,
   hoursEditLockDay,
   autoLogoutExtraMinutes,
+  maxOpenSessionHours,
 };

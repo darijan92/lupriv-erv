@@ -11,19 +11,36 @@ const MAX_PER_IP = 100;
 
 const store = new Map();
 
-function entry(key, now) {
+/** Current entry, or null when absent/expired. Never creates one (reads must not grow the map). */
+function peek(key, now) {
   const e = store.get(key);
-  if (!e || now - e.first > WINDOW_MS) {
-    const fresh = { count: 0, first: now };
-    store.set(key, fresh);
-    return fresh;
-  }
-  return e;
+  return e && now - e.first <= WINDOW_MS ? e : null;
+}
+
+function entry(key, now) {
+  const e = peek(key, now);
+  if (e) return e;
+  const fresh = { count: 0, first: now };
+  store.set(key, fresh);
+  return fresh;
+}
+
+/**
+ * MySQL compares usernames case- and accent-insensitively ("Ána" = "ana"), so fold the same
+ * way; otherwise spelling variants would each get their own attempt budget.
+ */
+function normalizeUsername(username) {
+  return String(username || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase()
+    .slice(0, 64);
 }
 
 function keys(ip, username) {
   return {
-    user: `u|${ip}|${String(username || '').trim().toLowerCase()}`,
+    user: `u|${ip}|${normalizeUsername(username)}`,
     ip: `i|${ip}`,
   };
 }
@@ -31,10 +48,10 @@ function keys(ip, username) {
 /** @returns {number} seconds to wait, or 0 when allowed */
 function retryAfter(ip, username, now = Date.now()) {
   const k = keys(ip, username);
-  const u = entry(k.user, now);
-  const i = entry(k.ip, now);
-  if (u.count >= MAX_PER_USER) return Math.ceil((u.first + WINDOW_MS - now) / 1000);
-  if (i.count >= MAX_PER_IP) return Math.ceil((i.first + WINDOW_MS - now) / 1000);
+  const u = peek(k.user, now);
+  const i = peek(k.ip, now);
+  if (u && u.count >= MAX_PER_USER) return Math.ceil((u.first + WINDOW_MS - now) / 1000);
+  if (i && i.count >= MAX_PER_IP) return Math.ceil((i.first + WINDOW_MS - now) / 1000);
   return 0;
 }
 
@@ -52,6 +69,10 @@ function _reset() {
   store.clear();
 }
 
+function _size() {
+  return store.size;
+}
+
 // Drop stale entries so the map cannot grow without bound.
 setInterval(() => {
   const now = Date.now();
@@ -65,5 +86,7 @@ module.exports = {
   retryAfter,
   recordFailure,
   recordSuccess,
+  normalizeUsername,
   _reset,
+  _size,
 };

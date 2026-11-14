@@ -178,7 +178,7 @@ async function checkIn() {
       return
     }
     msg.value = data.success
-    msgType.value = 'success'
+    msgType.value = data.autoClosed ? 'warn' : 'success'
     form.value = { username: '', password: '' }
     await load()
   } catch (e) {
@@ -203,7 +203,8 @@ async function checkOut() {
       password: outPassword.value,
     })
     msg.value = data.success
-    msgType.value = 'success'
+    // A forgotten check-out was closed by rule, not "until now": make it stand out.
+    msgType.value = data.autoClosed ? 'warn' : 'success'
     outUser.value = null
     await load()
   } catch (e) {

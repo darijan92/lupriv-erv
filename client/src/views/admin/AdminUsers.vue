@@ -184,8 +184,17 @@ async function save() {
 
 async function remove(u) {
   if (!confirm(`Obrisati ${u.username}?`)) return
-  await api.delete(`/users/${u.id}`)
-  await load()
+  try {
+    await api.delete(`/users/${u.id}`)
+    msg.value = 'Korisnik obrisan'
+    msgType.value = 'success'
+    await load()
+  } catch (e) {
+    // e.g. 409: the employee has recorded hours and cannot be deleted
+    msg.value = e.message
+    msgType.value = 'error'
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
 }
 
 onMounted(() => Promise.all([load(), loadLookups()]))

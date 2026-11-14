@@ -198,8 +198,17 @@ async function save() {
 
 async function remove(b) {
   if (!confirm('Obrisati poslovnicu?')) return;
-  await api.delete(`/branches/${b.id}`);
-  await load();
+  try {
+    await api.delete(`/branches/${b.id}`);
+    msg.value = 'Poslovnica obrisana';
+    msgType.value = 'success';
+    await load();
+  } catch (e) {
+    // e.g. 409: the branch has employees or recorded hours and cannot be deleted
+    msg.value = e.message;
+    msgType.value = 'error';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
 }
 
 onMounted(() => Promise.all([load(), loadUsers()]));

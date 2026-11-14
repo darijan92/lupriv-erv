@@ -66,16 +66,20 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: 'Greška na serveru' });
 });
 
-/** Periodic wake: every 30 min; actual logout only after 23:00 once per calendar day. */
-const AUTO_LOGOUT_INTERVAL_MS = 30 * 60 * 1000;
+/**
+ * Periodic wake: every 10 min; actual logout only after 23:00, once per calendar day
+ * (repeated while sessions of a late-closing branch are still inside their grace period).
+ */
+const AUTO_LOGOUT_INTERVAL_MS = 10 * 60 * 1000;
 
 async function scheduledAutoLogoutCheck(label) {
   const result = await runAutoLogout({ force: false });
   if (result.skipped) return;
-  if (result.closed || result.skippedNight) {
+  if (result.closed || result.skippedNight || result.deferred) {
     console.log(
       `Auto-logout (${label}): zatvoreno ${result.closed} (dan ${result.closedDay}, noć ${result.closedNight}), ` +
         `noćne današnje preskočene ${result.skippedNight}` +
+        (result.deferred ? `, odgođeno do sljedeće provjere ${result.deferred}` : '') +
         (result.fallbackPocetak ? `, fallback pocetak_rv×${result.fallbackPocetak}` : '') +
         (result.fallbackKraj ? `, fallback kraj_rv×${result.fallbackKraj}` : '')
     );

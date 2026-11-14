@@ -1,7 +1,8 @@
 const express = require('express');
 const { z } = require('zod');
 const { authenticateLimited } = require('../services/authService');
-const { startWork, withUserLock, findOpenSession } = require('../services/hoursService');
+const { startWork, withUserLock, closeStaleSessions } = require('../services/hoursService');
+const { formatDmy } = require('../services/auditLog');
 const pool = require('../db/pool');
 const { validate } = require('../middleware/validate');
 const { clientIp, nowTime, todayDate, appendPeriod } = require('../utils/time');
@@ -46,6 +47,13 @@ async function resolveBranch(req, explicitId) {
     [ip]
   );
   return rows[0] || null;
+}
+
+/** Sentence appended to the kiosk message when forgotten check-outs were closed by rule. */
+function staleNotice(closed) {
+  if (!closed.length) return '';
+  const list = closed.map((c) => `${formatDmy(c.datum)} u ${c.endStr}`).join(', ');
+  return ` Zaboravljena odjava automatski je zatvorena (${list}). Javite se voditelju radi ispravka.`;
 }
 
 function sendError(res, e) {
@@ -126,8 +134,10 @@ router.post('/check-in', validate({ body: credentials }), async (req, res) => {
     if (!branch) return res.status(400).json({ error: 'Poslovnica nije odabrana' });
 
     const today = todayDate();
-    await withUserLock(user.id, async (conn) => {
-      const open = await findOpenSession(user.id, conn);
+    const staleClosed = await withUserLock(user.id, async (conn) => {
+      // A forgotten check-out from an earlier day is closed by the auto-logout rules first,
+      // so it neither blocks today's check-in nor gets a made-up end time.
+      const { open, closed } = await closeStaleSessions(user.id, conn);
       if (open) {
         const since = String(open.datum).slice(0, 10) === today ? open.temp : `${open.datum} ${open.temp}`;
         throw new KioskError(400, `Greška: radno vrijeme je već aktivno (od ${since})`);
@@ -145,8 +155,13 @@ router.post('/check-in', validate({ body: credentials }), async (req, res) => {
       } else {
         await startWork(user.id, branch.id, today, conn);
       }
+      return closed;
     });
-    res.json({ success: 'Uspješno započeto radno vrijeme', branch: branch.naziv_oj });
+    res.json({
+      success: 'Uspješno započeto radno vrijeme' + (staleClosed.length ? '.' : '') + staleNotice(staleClosed),
+      autoClosed: staleClosed.length > 0,
+      branch: branch.naziv_oj,
+    });
   } catch (e) {
     sendError(res, e);
   }
@@ -155,14 +170,24 @@ router.post('/check-in', validate({ body: credentials }), async (req, res) => {
 router.post('/check-out', validate({ body: credentials }), async (req, res) => {
   try {
     const user = await authOrThrow(req);
-    await withUserLock(user.id, async (conn) => {
+    const staleClosed = await withUserLock(user.id, async (conn) => {
       // Any open session, not only today's: a 22:00–06:00 shift is checked out the next morning.
-      const hour = await findOpenSession(user.id, conn);
-      if (!hour) throw new KioskError(400, 'Greška: radno vrijeme nije aktivno');
-      const radni = appendPeriod(hour.radni_sati, hour.temp, nowTime());
-      await conn.query('UPDATE hours SET radni_sati=?, temp=NULL WHERE id=?', [radni, hour.id]);
+      // A stale one (forgotten check-out) is closed by rule instead of "until now".
+      const { open: hour, closed } = await closeStaleSessions(user.id, conn);
+      if (hour) {
+        const radni = appendPeriod(hour.radni_sati, hour.temp, nowTime());
+        await conn.query('UPDATE hours SET radni_sati=?, temp=NULL WHERE id=?', [radni, hour.id]);
+        return closed;
+      }
+      if (!closed.length) throw new KioskError(400, 'Greška: radno vrijeme nije aktivno');
+      return closed;
     });
-    res.json({ success: 'Uspješno završeno radno vrijeme' });
+    res.json({
+      success: staleClosed.length
+        ? staleNotice(staleClosed).trim()
+        : 'Uspješno završeno radno vrijeme',
+      autoClosed: staleClosed.length > 0,
+    });
   } catch (e) {
     sendError(res, e);
   }

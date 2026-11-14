@@ -2,6 +2,7 @@ const pool = require('../db/pool');
 const { buildMonthView, NIGHT_LABEL } = require('./hoursCalc');
 const { isValidHm, nowTime, appendPeriod, normalizeRadniSati } = require('../utils/time');
 const { nullsLastOrder } = require('../utils/sqlSort');
+const { isStaleSession, planStaleClose } = require('./sessionRules');
 
 function badRequest(message, status = 400) {
   const err = new Error(message);
@@ -287,13 +288,74 @@ async function withUserLock(userId, fn) {
   }
 }
 
-/** Most recent open session (any date), so overnight shifts can be checked out next morning. */
+/**
+ * Most recent open session (any date), so overnight shifts can be checked out next morning.
+ * Carries the branch's working hours for the auto-close rules.
+ */
 async function findOpenSession(userId, conn = pool) {
   const [rows] = await conn.query(
-    'SELECT * FROM hours WHERE user_id=? AND temp IS NOT NULL ORDER BY datum DESC, id DESC LIMIT 1',
+    `SELECT h.*, b.pocetak_rv AS branch_pocetak_rv, b.kraj_rv AS branch_kraj_rv
+     FROM hours h LEFT JOIN branches b ON b.id = h.branch_id
+     WHERE h.user_id=? AND h.temp IS NOT NULL
+     ORDER BY h.datum DESC, h.id DESC LIMIT 1`,
     [userId]
   );
   return rows[0] || null;
+}
+
+/**
+ * Close an open session by rule (auto-logout / forgotten check-out) and log it.
+ * Uses the caller's transaction when `conn` is given, otherwise its own.
+ * @returns {Promise<boolean>} false when the session was already closed meanwhile
+ */
+async function autoCloseSession(hour, plan, conn = null, notePrefix = '') {
+  const radni = appendPeriod(hour.radni_sati, hour.temp, plan.endStr);
+  const note = `${notePrefix}${plan.note}`;
+  const nap = `${note}${hour.napomena ? ` ${hour.napomena}` : ''}`.trim();
+  const run = async (c) => {
+    // temp IS NOT NULL guard: skip if the employee checked out meanwhile.
+    const [r] = await c.query(
+      'UPDATE hours SET radni_sati=?, temp=NULL, napomena=? WHERE id=? AND temp IS NOT NULL',
+      [radni, nap, hour.id]
+    );
+    if (!r.affectedRows) return false;
+    await c.query(
+      'INSERT INTO logs (datum, user_id, branch_id, hour_id, content) VALUES (NOW(),?,?,?,?)',
+      [hour.user_id, hour.branch_id ?? 0, hour.id, note]
+    );
+    return true;
+  };
+  if (conn) return run(conn);
+  const own = await pool.getConnection();
+  try {
+    await own.beginTransaction();
+    const done = await run(own);
+    await own.commit();
+    return done;
+  } catch (e) {
+    await own.rollback().catch(() => {});
+    throw e;
+  } finally {
+    own.release();
+  }
+}
+
+/**
+ * Close this user's stale sessions (forgotten check-outs from earlier days) by the
+ * auto-logout rules. Call inside withUserLock.
+ * @returns {Promise<{ open: object|null, closed: Array<{ datum: string, endStr: string }> }>}
+ *          `open` is the remaining genuinely open session, if any.
+ */
+async function closeStaleSessions(userId, conn) {
+  const closed = [];
+  for (let i = 0; i < 10; i++) {
+    const open = await findOpenSession(userId, conn);
+    if (!open || !isStaleSession(open)) return { open, closed };
+    const plan = planStaleClose(open);
+    await autoCloseSession(open, plan, conn);
+    closed.push({ datum: String(open.datum).slice(0, 10), endStr: plan.endStr });
+  }
+  return { open: await findOpenSession(userId, conn), closed };
 }
 
 /** Start radno vrijeme: reopen today's row for this branch, or insert a new one. */
@@ -332,15 +394,29 @@ async function listActive() {
 async function adminStop(hourId, adminUserId, password, verifyPasswordFn) {
   const [admins] = await pool.query('SELECT * FROM users WHERE id=?', [adminUserId]);
   const admin = admins[0];
+  // 403, not 401: the client treats 401 as an expired session and would log the admin out.
   if (!admin || !(await verifyPasswordFn(password || '', admin.password))) {
-    throw badRequest('Pogrešna administratorska lozinka', 401);
+    throw badRequest('Pogrešna administratorska lozinka', 403);
   }
-  const [rows] = await pool.query('SELECT * FROM hours WHERE id=?', [hourId]);
+  const [rows] = await pool.query(
+    `SELECT h.*, b.pocetak_rv AS branch_pocetak_rv, b.kraj_rv AS branch_kraj_rv
+     FROM hours h LEFT JOIN branches b ON b.id = h.branch_id WHERE h.id=?`,
+    [hourId]
+  );
   const hour = rows[0];
   if (!hour || !hour.temp) throw badRequest('Nema aktivnog RV');
-  const radni = appendPeriod(hour.radni_sati, hour.temp, nowTime());
-  const nap = `Odjava od administratora! ${hour.napomena || ''}`.trim();
-  await pool.query('UPDATE hours SET radni_sati=?, temp=NULL, napomena=? WHERE id=?', [radni, nap, hour.id]);
+  const prefix = 'Odjava od administratora! ';
+  if (isStaleSession(hour)) {
+    // A forgotten check-out from an earlier day: "now" would be a bogus end time.
+    await autoCloseSession(hour, planStaleClose(hour), null, prefix);
+  } else {
+    const radni = appendPeriod(hour.radni_sati, hour.temp, nowTime());
+    const nap = `${prefix}${hour.napomena || ''}`.trim();
+    await pool.query(
+      'UPDATE hours SET radni_sati=?, temp=NULL, napomena=? WHERE id=? AND temp IS NOT NULL',
+      [radni, nap, hour.id]
+    );
+  }
   return { success: 'Uspješno odjavljen korisnik' };
 }
 
@@ -356,6 +432,8 @@ module.exports = {
   getHour,
   withUserLock,
   findOpenSession,
+  autoCloseSession,
+  closeStaleSessions,
   MAX_ABSENCE_DAYS,
   deleteHours,
   startWork,

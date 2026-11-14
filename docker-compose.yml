@@ -59,6 +59,8 @@ services:
       HOURS_EDIT_LOCK_DAY: ${HOURS_EDIT_LOCK_DAY:-5}
       # Minutes added to branch kraj_rv when auto-logout closes a forgotten day session (old app: 60).
       AUTO_LOGOUT_EXTRA_MINUTES: ${AUTO_LOGOUT_EXTRA_MINUTES:-0}
+      # Sessions from an earlier day open longer than this are forgotten check-outs (closed by rule).
+      MAX_OPEN_SESSION_HOURS: ${MAX_OPEN_SESSION_HOURS:-16}
     # API not published on host by default (reach via web nginx /api/).
     # Expose 3001 with docker-compose.dev.yml when debugging.
     healthcheck:

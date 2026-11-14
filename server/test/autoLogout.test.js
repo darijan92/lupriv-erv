@@ -6,12 +6,13 @@ const path = require('path');
 const updates = [];
 const inserts = [];
 let openRows = [];
+let affected = 1;
 function query(sql, params) {
   const s = String(sql);
   if (s.includes('FROM hours h') && s.includes('temp IS NOT NULL')) return [openRows];
   if (s.startsWith('UPDATE hours SET')) {
     updates.push({ sql: s, params });
-    return [{ affectedRows: 1 }];
+    return [{ affectedRows: affected }];
   }
   if (s.includes('INSERT INTO logs')) {
     inserts.push({ sql: s, params });
@@ -41,7 +42,8 @@ const {
   AUTO_LOGOUT_NOTE_NIGHT,
   AUTO_LOGOUT_NOTE_AFTER_CLOSE,
 } = require('../src/routes/autoLogout');
-const { todayDate, timeDifference } = require('../src/utils/time');
+const { timeDifference } = require('../src/utils/time');
+const rules = require('../src/services/sessionRules');
 
 const TODAY = '2026-09-24';
 const YDAY = '2026-09-23';
@@ -77,10 +79,9 @@ test('night sessions: tonight skipped, yesterday closed at pocetak_rv (fallback 
 });
 
 test('runAutoLogout closes rows and logs each one', async () => {
-  const today = todayDate();
-  const d = new Date();
-  d.setDate(d.getDate() - 1);
-  const yday = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const now = new Date(2026, 8, 24, 23, 40);
+  const today = TODAY;
+  const yday = YDAY;
   openRows = [
     { id: 1, datum: today, temp: '09:00', radni_sati: null, user_id: 10, branch_id: 1, napomena: null, branch_pocetak_rv: '08:00', branch_kraj_rv: '16:00' },
     { id: 2, datum: today, temp: '22:00', radni_sati: null, user_id: 11, branch_id: 1, napomena: null, branch_pocetak_rv: '08:00', branch_kraj_rv: '16:00' },
@@ -92,7 +93,7 @@ test('runAutoLogout closes rows and logs each one', async () => {
   _resetLastAutoLogoutDateForTests();
   const prev = process.env.AUTO_LOGOUT_EXTRA_MINUTES;
   delete process.env.AUTO_LOGOUT_EXTRA_MINUTES;
-  const result = await runAutoLogout({ force: true });
+  const result = await runAutoLogout({ force: true, now });
   if (prev !== undefined) process.env.AUTO_LOGOUT_EXTRA_MINUTES = prev;
 
   assert.strictEqual(result.closedDay, 3);
@@ -111,4 +112,60 @@ test('runAutoLogout closes rows and logs each one', async () => {
   assert.ok(byId(4)[1].includes('x'));
   assert.strictEqual(byId(6)[0], '15:10 15:10');
   assert.ok(!updates.some((u) => u.params[2] === 2));
+});
+
+test('branch closing at 23:00: sessions are deferred during the grace period, then closed', async () => {
+  const row = { id: 7, datum: TODAY, temp: '15:00', radni_sati: null, user_id: 20, branch_id: 6, napomena: null, branch_pocetak_rv: '15:00', branch_kraj_rv: '23:00' };
+  openRows = [row];
+  updates.length = 0;
+  inserts.length = 0;
+  _resetLastAutoLogoutDateForTests();
+
+  const early = await runAutoLogout({ now: new Date(2026, 8, 24, 23, 5) });
+  assert.deepStrictEqual([early.closed, early.deferred, early.skipped], [0, 1, false]);
+  assert.strictEqual(updates.length, 0);
+
+  // Not marked as done, so the next timer tick retries and closes it.
+  const later = await runAutoLogout({ now: new Date(2026, 8, 24, 23, 31) });
+  assert.deepStrictEqual([later.closedDay, later.deferred], [1, 0]);
+  assert.strictEqual(updates[0].params[0], '15:00 23:00');
+
+  const again = await runAutoLogout({ now: new Date(2026, 8, 24, 23, 45) });
+  assert.strictEqual(again.reason, 'already_ran');
+});
+
+test('a row the employee closed in the meantime is not counted or logged', async () => {
+  openRows = [{ id: 8, datum: TODAY, temp: '09:00', radni_sati: null, user_id: 21, branch_id: 1, napomena: null, branch_kraj_rv: '16:00' }];
+  updates.length = 0;
+  inserts.length = 0;
+  affected = 0;
+  const r = await runAutoLogout({ force: true, now: new Date(2026, 8, 24, 23, 40) });
+  affected = 1;
+  assert.strictEqual(r.closed, 0);
+  assert.strictEqual(inserts.length, 0);
+});
+
+test('stale sessions: old date and open longer than the limit', () => {
+  const now = new Date(2026, 8, 24, 21, 0);
+  // Night shift from last night, still open at 21:00 the next day (23 h).
+  assert.strictEqual(rules.isStaleSession({ datum: YDAY, temp: '22:00' }, now, 16), true);
+  // Night shift from last night checked out at 06:00: a real shift, not stale.
+  assert.strictEqual(rules.isStaleSession({ datum: YDAY, temp: '22:00' }, new Date(2026, 8, 24, 6, 0), 16), false);
+  // Today's session is never stale.
+  assert.strictEqual(rules.isStaleSession({ datum: TODAY, temp: '00:10' }, now, 16), false);
+  // Day session the missed pass left open.
+  assert.strictEqual(rules.isStaleSession({ datum: YDAY, temp: '08:00' }, new Date(2026, 8, 24, 7, 55), 16), true);
+
+  const night = rules.planStaleClose({ datum: YDAY, temp: '22:00', branch_pocetak_rv: '07:00' }, now, 0);
+  assert.deepStrictEqual([night.kind, night.endStr], ['night_previous', '07:00']);
+  const day = rules.planStaleClose({ datum: YDAY, temp: '08:00', branch_kraj_rv: '16:00' }, now, 0);
+  assert.deepStrictEqual([day.kind, day.endStr], ['day', '16:00']);
+});
+
+test('grace only applies to today\'s day sessions and ends before midnight', () => {
+  const plan = { kind: 'day', endStr: '23:45' };
+  assert.strictEqual(rules.isWithinDayCloseGrace({ datum: TODAY }, plan, TODAY, 23 * 60 + 46), true);
+  assert.strictEqual(rules.isWithinDayCloseGrace({ datum: TODAY }, plan, TODAY, 23 * 60 + 50), false);
+  assert.strictEqual(rules.isWithinDayCloseGrace({ datum: YDAY }, plan, TODAY, 23 * 60 + 5), false);
+  assert.strictEqual(rules.isWithinDayCloseGrace({ datum: TODAY }, { kind: 'day', endStr: '15:10', afterClose: true }, TODAY, 15 * 60 + 11), false);
 });

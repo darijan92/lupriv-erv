@@ -10,7 +10,7 @@ const {
   verifyPassword,
   hashPassword,
 } = require('../services/authService');
-const { startWork, withUserLock, findOpenSession } = require('../services/hoursService');
+const { startWork, withUserLock, closeStaleSessions } = require('../services/hoursService');
 const { writeLog, b } = require('../services/auditLog');
 const { clientIp, todayDate } = require('../utils/time');
 const { nullsLastOrder } = require('../utils/sqlSort');
@@ -71,7 +71,8 @@ router.post('/login', validate({ body: loginSchema }), async (req, res) => {
       }
 
       const started = await withUserLock(user.id, async (conn) => {
-        if (await findOpenSession(user.id, conn)) return false;
+        const { open } = await closeStaleSessions(user.id, conn);
+        if (open) return false;
         await startWork(user.id, branch.id, todayDate(), conn);
         return true;
       });
