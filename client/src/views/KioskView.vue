@@ -82,7 +82,7 @@
           <div v-for="p in posts" :key="p.id" style="margin-bottom:1rem">
             <strong>{{ p.naslov }}</strong>
             <div class="muted" style="font-size:0.85rem">{{ formatDate(p.created_at) }}</div>
-            <div class="post-body" v-html="p.sadrzaj"></div>
+            <div class="post-body" v-html="safeHtml(p.sadrzaj)"></div>
           </div>
         </div>
       </template>
@@ -91,6 +91,7 @@
 </template>
 
 <script setup>
+import { safeHtml } from '../utils/safeHtml'
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../api'
@@ -177,7 +178,7 @@ async function checkIn() {
       return
     }
     msg.value = data.success
-    msgType.value = 'success'
+    msgType.value = data.autoClosed ? 'warn' : 'success'
     form.value = { username: '', password: '' }
     await load()
   } catch (e) {
@@ -202,7 +203,8 @@ async function checkOut() {
       password: outPassword.value,
     })
     msg.value = data.success
-    msgType.value = 'success'
+    // A forgotten check-out was closed by rule, not "until now": make it stand out.
+    msgType.value = data.autoClosed ? 'warn' : 'success'
     outUser.value = null
     await load()
   } catch (e) {

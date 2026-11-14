@@ -2,6 +2,28 @@ const express = require('express');
 const pool = require('../db/pool');
 const { authRequired, requireAdmin } = require('../middleware/auth');
 const { buildOrderBy, likePattern, parseOrder } = require('../utils/sqlSort');
+const { validate } = require('../middleware/validate');
+const { z } = require('zod');
+
+const hm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Vrijeme mora biti HH:mm');
+const branchSchema = z.object({
+  sifra: z.coerce.string().trim().min(1, 'Šifra je obavezna').max(191),
+  naziv_oj: z.string().trim().min(1, 'Naziv je obavezan').max(25),
+  adresa: z.string().max(50).optional().nullable(),
+  grad: z.string().trim().min(1, 'Grad je obavezan').max(30),
+  zupanija: z.string().trim().min(1, 'Županija je obavezna').max(50),
+  pocetak_rv: hm,
+  kraj_rv: hm,
+  rad_nedjeljom: z.union([z.boolean(), z.coerce.number()]).optional(),
+  voditelj_oj: z.union([z.coerce.number().int().positive(), z.literal(''), z.null()]).optional(),
+});
+const idParams = z.object({ id: z.coerce.number().int().positive() });
+
+/** The legacy `ip` column is unused (branch is chosen per device), so it is never sent. */
+function forViewer(_req, branch) {
+  const { ip: _ip, ...rest } = branch;
+  return rest;
+}
 
 const router = express.Router();
 
@@ -39,24 +61,21 @@ router.get('/', authRequired, async (req, res) => {
      ORDER BY ${orderBy}`,
     params
   );
-  res.json({ branches: rows });
+  res.json({ branches: rows.map((b) => forViewer(req, b)) });
 });
 
-router.get('/:id', authRequired, async (req, res) => {
+router.get('/:id', authRequired, validate({ params: idParams }), async (req, res) => {
   const [rows] = await pool.query('SELECT * FROM branches WHERE id=?', [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: 'Nije pronađena' });
-  res.json({ branch: rows[0] });
+  res.json({ branch: forViewer(req, rows[0]) });
 });
 
-router.post('/', authRequired, requireAdmin, async (req, res) => {
+router.post('/', authRequired, requireAdmin, validate({ body: branchSchema }), async (req, res) => {
   try {
-    const b = req.body || {};
-    if (!b.sifra || !b.naziv_oj || !b.grad || !b.zupanija || !b.pocetak_rv || !b.kraj_rv) {
-      return res.status(400).json({ error: 'Nedostaju obavezna polja' });
-    }
+    const b = req.body;
     const [r] = await pool.query(
-      `INSERT INTO branches (sifra, naziv_oj, adresa, grad, zupanija, pocetak_rv, kraj_rv, rad_nedjeljom, voditelj_oj, ip)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO branches (sifra, naziv_oj, adresa, grad, zupanija, pocetak_rv, kraj_rv, rad_nedjeljom, voditelj_oj)
+       VALUES (?,?,?,?,?,?,?,?,?)`,
       [
         b.sifra,
         b.naziv_oj,
@@ -67,7 +86,6 @@ router.post('/', authRequired, requireAdmin, async (req, res) => {
         b.kraj_rv,
         b.rad_nedjeljom ? 1 : 0,
         b.voditelj_oj || null,
-        b.ip || null,
       ]
     );
     res.status(201).json({ id: r.insertId, success: 'Poslovnica kreirana' });
@@ -79,12 +97,12 @@ router.post('/', authRequired, requireAdmin, async (req, res) => {
   }
 });
 
-router.put('/:id', authRequired, requireAdmin, async (req, res) => {
+router.put('/:id', authRequired, requireAdmin, validate({ params: idParams, body: branchSchema }), async (req, res) => {
   try {
-    const b = req.body || {};
+    const b = req.body;
     await pool.query(
       `UPDATE branches SET sifra=?, naziv_oj=?, adresa=?, grad=?, zupanija=?, pocetak_rv=?, kraj_rv=?,
-       rad_nedjeljom=?, voditelj_oj=?, ip=? WHERE id=?`,
+       rad_nedjeljom=?, voditelj_oj=? WHERE id=?`,
       [
         b.sifra,
         b.naziv_oj,
@@ -95,7 +113,6 @@ router.put('/:id', authRequired, requireAdmin, async (req, res) => {
         b.kraj_rv,
         b.rad_nedjeljom ? 1 : 0,
         b.voditelj_oj || null,
-        b.ip || null,
         req.params.id,
       ]
     );
@@ -107,7 +124,14 @@ router.put('/:id', authRequired, requireAdmin, async (req, res) => {
   }
 });
 
-router.delete('/:id', authRequired, requireAdmin, async (req, res) => {
+router.delete('/:id', authRequired, requireAdmin, validate({ params: idParams }), async (req, res) => {
+  // Attendance history must survive: refuse while hours reference the branch.
+  const [[{ n }]] = await pool.query('SELECT COUNT(*) AS n FROM hours WHERE branch_id=?', [req.params.id]);
+  if (Number(n) > 0) {
+    return res.status(409).json({
+      error: 'Poslovnica ima evidenciju sati i ne može se obrisati.',
+    });
+  }
   await pool.query('DELETE FROM branches WHERE id=?', [req.params.id]);
   res.json({ success: 'Poslovnica obrisana' });
 });

@@ -16,7 +16,7 @@ services:
     environment:
       # Host Vite / local debugging often needs these origins
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080,http://localhost:5173,http://localhost:5175}
-      KIOSK_ALLOW_BRANCH_QUERY: ${KIOSK_ALLOW_BRANCH_QUERY:-1}
+      ALLOW_INSECURE_DEFAULTS: ${ALLOW_INSECURE_DEFAULTS:-1}
 
   phpmyadmin:
     image: phpmyadmin:5

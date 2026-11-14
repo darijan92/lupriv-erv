@@ -9,6 +9,11 @@
 # Prefer host-installed Caddy on small VPS if you already use it for other sites.
 
 services:
+  # Caddy → web nginx → api: two proxy hops in front of the API.
+  api:
+    environment:
+      TRUST_PROXY_HOPS: "2"
+
   caddy:
     image: caddy:2-alpine
     container_name: lupriv_new_caddy

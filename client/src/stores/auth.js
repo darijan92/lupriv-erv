@@ -9,6 +9,7 @@ export const useAuthStore = defineStore('auth', () => {
   const isLoggedIn = computed(() => !!token.value)
   const isAdmin = computed(() => user.value && user.value.role_id >= 3)
   const isModerator = computed(() => user.value && user.value.role_id === 2)
+  const mustChangePassword = computed(() => !!user.value?.must_change_password)
 
   function setSession(t, u) {
     token.value = t
@@ -30,5 +31,22 @@ export const useAuthStore = defineStore('auth', () => {
     return data
   }
 
-  return { token, user, isLoggedIn, isAdmin, isModerator, setSession, logout, login }
+  async function changePassword(current_password, new_password) {
+    const { data } = await api.post('/auth/change-password', { current_password, new_password })
+    setSession(data.token, data.user)
+    return data
+  }
+
+  return {
+    token,
+    user,
+    isLoggedIn,
+    isAdmin,
+    isModerator,
+    mustChangePassword,
+    setSession,
+    logout,
+    login,
+    changePassword,
+  }
 })

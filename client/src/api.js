@@ -11,10 +11,43 @@ api.interceptors.request.use((config) => {
   return config
 })
 
+/** Requests that answer 401 for a wrong password rather than an expired session. */
+const CREDENTIAL_ENDPOINTS = ['/auth/login', '/kiosk/check-in', '/kiosk/check-out']
+
+/** File downloads ask for a blob, so an error body arrives as a blob too: read its JSON. */
+async function errorBody(err) {
+  const data = err.response?.data
+  if (typeof Blob !== 'undefined' && data instanceof Blob) {
+    try {
+      return JSON.parse(await data.text())
+    } catch {
+      return {}
+    }
+  }
+  return data || {}
+}
+
 api.interceptors.response.use(
   (r) => r,
-  (err) => {
-    const msg = err.response?.data?.error || err.message || 'Greška'
+  async (err) => {
+    const status = err.response?.status
+    const body = await errorBody(err)
+    const url = err.config?.url || ''
+    const hadToken = !!localStorage.getItem('token')
+    if (status === 401 && hadToken && !CREDENTIAL_ENDPOINTS.some((p) => url.startsWith(p))) {
+      // Expired or revoked session: drop it and go to login (full reload resets the store).
+      localStorage.removeItem('token')
+      localStorage.removeItem('user')
+      if (!window.location.pathname.startsWith('/login')) {
+        window.location.assign('/login?expired=1')
+      }
+    }
+    if (status === 403 && body.code === 'PASSWORD_CHANGE_REQUIRED') {
+      if (!window.location.pathname.startsWith('/change-password')) {
+        window.location.assign('/change-password')
+      }
+    }
+    const msg = body.error || err.message || 'Greška'
     return Promise.reject(new Error(msg))
   }
 )

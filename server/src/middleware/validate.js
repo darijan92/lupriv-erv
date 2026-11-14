@@ -21,7 +21,13 @@ function validate(schemas) {
             error: r.error.issues[0]?.message || 'Neispravni query parametri',
           });
         }
-        req.query = { ...req.query, ...r.data };
+        // Express 5 exposes req.query as a getter; shadow it so coerced values are visible.
+        Object.defineProperty(req, 'query', {
+          value: { ...req.query, ...r.data },
+          writable: true,
+          configurable: true,
+          enumerable: true,
+        });
       }
       if (schemas.params) {
         const r = schemas.params.safeParse(req.params);

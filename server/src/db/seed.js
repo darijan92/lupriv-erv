@@ -14,10 +14,10 @@ async function seed() {
     const [branchesCount] = await conn.query('SELECT COUNT(*) AS c FROM branches');
     if (branchesCount[0].c === 0) {
       await conn.query(
-        `INSERT INTO branches (sifra, naziv_oj, adresa, grad, zupanija, pocetak_rv, kraj_rv, rad_nedjeljom, ip)
+        `INSERT INTO branches (sifra, naziv_oj, adresa, grad, zupanija, pocetak_rv, kraj_rv, rad_nedjeljom)
          VALUES
-         ('001','OJ Zagreb 1','Ilica 1','Zagreb','Grad Zagreb','07:00','20:00',0,'127.0.0.1'),
-         ('002','OJ Split 1','Marmontova 5','Split','Splitsko-dalmatinska','07:00','20:00',1,NULL)`
+         ('001','OJ Zagreb 1','Ilica 1','Zagreb','Grad Zagreb','07:00','20:00',0),
+         ('002','OJ Split 1','Marmontova 5','Split','Splitsko-dalmatinska','07:00','20:00',1)`
       );
     }
 

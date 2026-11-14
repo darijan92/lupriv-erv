@@ -8,6 +8,7 @@
         <router-link v-if="auth.isAdmin" to="/admin">Admin</router-link>
         <router-link v-if="auth.isModerator" to="/moderator">Voditelj</router-link>
         <router-link v-if="auth.isLoggedIn && auth.user?.id" :to="`/employee/${auth.user.id}`">Moji sati</router-link>
+        <router-link v-if="auth.isLoggedIn" to="/change-password">Lozinka</router-link>
         <button v-if="auth.isLoggedIn" class="linkish" @click="doLogout">Odjava</button>
       </nav>
     </header>

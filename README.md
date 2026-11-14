@@ -62,7 +62,8 @@ lupriv_new/
 Prod-like layout: **mysql + api + web**. MySQL i API **nisu** izloženi na host portovima; phpMyAdmin se ne pokreće. Web na **:8080** (nginx → `/api/` → api).
 
 ```bash
-cd /Users/darijan/privateProjects/lupriv_new
+cd lupriv-erv
+cp .env.example .env   # lokalno; na VPS-u .env.docker.example s pravim tajnama
 
 npm run docker:up          # docker compose up --build -d --remove-orphans
 # api na startu radi migrate (idempotentno); seed samo na praznoj bazi:
@@ -218,16 +219,17 @@ docker compose exec -T mysql mysql -uroot -prootpass lupriv_new < databases/lupr
 ```
 
 4. U `.env` / `server/.env` postavi `DB_NAME` na tu bazu (trenutno: `lupriv_new`).
-5. **Obavezno** hashaj plaintext lozinke (produkcija ih ima u plainu; API prihvaća samo bcrypt `$2…`):
+5. **Ponovno pokreni migraciju** (dump vraća stare FK-ove i nema novih stupaca): `npm run migrate` ili `docker compose exec api npm run migrate`.
+6. **Obavezno** hashaj plaintext lozinke (produkcija ih ima u plainu; API prihvaća samo bcrypt `$2…`):
 
 ```bash
 npm run hash-passwords
 # ili: npm run hash-passwords --prefix server
 ```
 
-Skripta je idempotentna: već bcrypt retke preskače; ispisuje samo brojače (nikad lozinke ni usernames). Sigurno je pokrenuti ponovno.
+Skripta je idempotentna: već bcrypt retke preskače; ispisuje samo brojače (nikad lozinke ni usernames). Sigurno je pokrenuti ponovno. Svaki tako hashirani korisnik dobiva `must_change_password=1` i mora postaviti novu lozinku pri prvoj prijavi u panel (stranica **Lozinka**). Kiosk prijava/odjava radi i prije promjene.
 
-6. Demo seed baza (ako je sačuvana) može ostati kao `lupriv_new_archive` — ne briši je ako ti treba.
+7. Demo seed baza (ako je sačuvana) može ostati kao `lupriv_new_archive` — ne briši je ako ti treba.
 
 ### Odsustva (UI)
 
@@ -237,13 +239,16 @@ Plaćena odsustva u izračunu (`hoursCalc.js`) ostaju usklađena s legacy listom
 ### Auto-odjava
 
 - **Raspored:** jednom dnevno nakon **23:00** (lokalno vrijeme servera / Europe/Sarajevo). Interni timer u API procesu budi se ~svakih 30 min, ali **izvršava odjavu samo** ako je ≥ 23:00 i još nije odradio taj kalendarski dan.
-- **Dnevne smjene** (otvoreni `temp` s početkom **&lt; 20:00**): zatvara se s krajem = **`kraj_rv` poslovnice** (`hours.branch_id` — ista grana u kojoj je radnik radio tu sesiju; u `radni_sati` isti kalendarski dan, npr. `09:00 16:00`). Napomena `Automatska odjava!`. Ako grana nema valjani `kraj_rv` → fallback **23:00** (broji se u odgovoru `fallbackKraj`).
+- **Dnevne smjene** (otvoreni `temp` s početkom **&lt; 20:00**): zatvara se s krajem = **`kraj_rv` poslovnice** (+ `AUTO_LOGOUT_EXTRA_MINUTES`, zadano 0; stari app je imao 60, najviše 23:59) (`hours.branch_id` — ista grana u kojoj je radnik radio tu sesiju; u `radni_sati` isti kalendarski dan, npr. `09:00 16:00`). Napomena `Automatska odjava!`. Ako grana nema valjani `kraj_rv` → fallback **23:00** (broji se u odgovoru `fallbackKraj`).
 - **Noćne smjene (start ≥ 20:00), danas:** na runu istog kalendarskog dana **preskaču se** (ostaju otvorene do jutra).
 - **Noćne smjene jučer (ili starije):** ako su i dalje otvorene na večernjem runu (≥ 23:00), automatski se zatvaraju s krajem = **`pocetak_rv` poslovnice** (jutro nakon datuma prijave; u `radni_sati` overnight par npr. `22:00 08:00`). Napomena `Automatska odjava (noćna smjena)!`. Ako grana nema valjani `pocetak_rv` → fallback **08:00** (broji se u odgovoru `fallbackPocetak`).
+- **Prijava nakon `kraj_rv`** (npr. početak 15:10, `kraj_rv` 14:00): sesija se zatvara s nula sati (`15:10 15:10`) i napomenom `Automatska odjava (prijava nakon kraja RV, provjeriti)!` umjesto ~23 h prekovremenog. Voditelj/admin upisuje stvarno vrijeme.
+- **Poslovnice koje rade do kasno** (npr. `kraj_rv` 23:00): današnje dnevne sesije ne zatvaraju se dok ne prođe **30 min nakon `kraj_rv`** (najkasnije 23:50), da se radnici stignu sami odjaviti. Provjera se ponavlja svakih 10 min; u odgovoru se broje kao `deferred`.
+- **Zaboravljena odjava** (sesija od ranijeg datuma otvorena dulje od `MAX_OPEN_SESSION_HOURS`, zadano 16 h — npr. noćna smjena koju večernji run još nije zatvorio, ili je run propušten jer server nije radio): pri sljedećoj prijavi/odjavi na kiosku, prijavi s „Započni radno vrijeme” ili „Zaustavi RV” zatvara se **po istim pravilima** (kraj = `kraj_rv` odnosno `pocetak_rv`), a ne „do sada”. Radnik dobije poruku da se javi voditelju; nova prijava nije blokirana.
 - Ne koristi se `nocni_rad` flag — samo sat početka (`temp`) + `hours.datum`. Nema splitanja ni automatske prijave sljedeći dan.
 - **Zadnji run date** drži se u memoriji procesa. Restart API-ja nakon 23:00 može ponovno odraditi jedan prolaz istog dana — prihvatljivo; po želji kasnije file/DB.
-- Kraj dnevne smjene je **`kraj_rv`** (ne `kraj_rv+1h`). Nema više 15-min zatvaranja.
-- Vanjski cron / ručno: `POST /api/auto-logout/run` (iste A/B/C klasifikacije; dnevni kraj = `kraj_rv`). Zahtijeva `AUTO_LOGOUT_SECRET` (header `X-Auto-Logout-Secret` ili `?secret=`). Bez ispravne tajne → 401; ako env nije postavljen → 503.
+- Kraj dnevne smjene je **`kraj_rv`** (ne `kraj_rv+1h`), osim ako je postavljen `AUTO_LOGOUT_EXTRA_MINUTES`. Nema više 15-min zatvaranja.
+- Vanjski cron / ručno: `POST /api/auto-logout/run` (iste A/B/C klasifikacije; dnevni kraj = `kraj_rv`). Zahtijeva `AUTO_LOGOUT_SECRET` (header `X-Auto-Logout-Secret` ili JSON tijelo `{"secret": …}`; query `?secret=` se više ne prihvaća jer završava u logovima). Bez ispravne tajne → 401; ako env nije postavljen → 503.
 
 Primjer:
 
@@ -251,12 +256,29 @@ Primjer:
 curl -X POST -H "X-Auto-Logout-Secret: $AUTO_LOGOUT_SECRET" http://localhost:3001/api/auto-logout/run
 ```
 
+### Prava i kiosk
+
+- **Voditelj** vidi i uređuje samo zaposlenike poslovnice koju vodi (ili kojoj pripada), ne može mijenjati vlastite sate, a prošli mjesec može mijenjati samo do `HOURS_EDIT_LOCK_DAY`. dana u mjesecu (zadano 5, kao stari app). Admin nema ograničenja.
+- Svako dodavanje, uređivanje, brisanje i zaustavljanje sati od strane voditelja/admina zapisuje se u **Logovi** (tko, kome, datum, prije → poslije).
+- Korisnik ili poslovnica sa satima ne mogu se obrisati (sati se čuvaju): korisniku se postavlja datum odlaska. Odlazak i promjena uloge vrijede odmah, i za već prijavljene.
+- **Kiosk:** poslovnica se odabire na uređaju (početna stranica ili **Prijava** s odabranom poslovnicom) i pamti u pregledniku (`localStorage`). IP adrese poslovnica se više ne koriste ni ne provjeravaju; stupac `branches.ip` ostaje u bazi radi starih podataka, ali ga aplikacija ne čita ni ne mijenja.
+- Prijava i kiosk: 10 neuspjelih pokušaja po korisniku/IP-u u 15 min → privremena blokada; poruka ne otkriva postoji li korisničko ime.
+- `TRUST_PROXY_HOPS`: 1 kad je ispred API-ja samo web nginx, 2 kad je ispred još Caddy (VPS). Pogrešna vrijednost znači krivi IP klijenta u ograničenju pokušaja prijave.
+
+### Testovi
+
+```bash
+npm test --prefix server   # jedinični testovi (izračun sati, auto-odjava, prava, konfiguracija)
+npm run lint
+```
+
 ### Produkcijski checklist
 
-- [ ] `JWT_SECRET` dug i nasumičan
+- [ ] `JWT_SECRET` dug i nasumičan (API se u produkciji ne pokreće sa zadanim tajnama)
 - [ ] `AUTO_LOGOUT_SECRET` postavljen
+- [ ] `TRUST_PROXY_HOPS=2` iza Caddyja
 - [ ] `CORS_ORIGIN=https://your.domain` (VPS)
-- [ ] `KIOSK_ALLOW_BRANCH_QUERY=0` (stvarna IP politika početne stranice)
+- [ ] Na svakom uređaju poslovnice jednom odabrati poslovnicu (pamti se u pregledniku)
 - [ ] Nakon importa dumpa: `npm run hash-passwords` (ili `docker compose exec api npm run hash-passwords`)
 - [ ] MySQL/API nisu javno publishani; phpMyAdmin off na VPS-u
 - [ ] HTTPS (Caddy) — vidi `deploy/`
@@ -269,7 +291,6 @@ Detaljnije: [`deploy/README.md`](deploy/README.md).
 ## Namjerno odgođeno
 
 - Pixel-perfect Blade UI
-- Stroga produkcijska IP politika (početna stranica) — lokalno još `KIOSK_ALLOW_BRANCH_QUERY=1`
 - Noćna smjena na početnoj stranici preko ponoći (ulog noćnih smjena je na voditelju)
 
 Stari projekt `../lupriv` **nije diran**.

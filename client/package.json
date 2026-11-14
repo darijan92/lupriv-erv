@@ -7,22 +7,25 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "lint": "eslint src --ext .js,.vue || true"
+    "lint": "eslint src"
   },
   "dependencies": {
     "@tiptap/pm": "^3.31.3",
     "@tiptap/starter-kit": "^3.31.3",
     "@tiptap/vue-3": "^3.31.3",
     "axios": "^1.20.0",
+    "dompurify": "^3.4.17",
     "pinia": "^4.0.3",
     "vue": "^3.5.42",
     "vue-router": "^4.6.4"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@vitejs/plugin-vue": "^6.0.8",
     "eslint": "^10.11.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-vue": "^10.11.0",
+    "globals": "^16.5.0",
     "prettier": "^3.9.9",
     "vite": "^8.3.0"
   }

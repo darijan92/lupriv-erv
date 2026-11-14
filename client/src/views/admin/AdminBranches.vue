@@ -86,10 +86,6 @@
         </div>
         <div class="row">
           <div class="field">
-            <label>IP (opcionalno, legacy)</label
-            ><input v-model="form.ip" placeholder="127.0.0.1" />
-          </div>
-          <div class="field">
             <label>Voditelj</label>
             <select v-model="form.voditelj_oj">
               <option :value="null">—</option>
@@ -99,7 +95,7 @@
             </select>
           </div>
           <label style="display: flex; gap: 0.5rem; align-items: center"
-            ><input type="checkbox" v-model="form.rad_nedjeljom" style="width: auto" /> Rad
+            ><input v-model="form.rad_nedjeljom" type="checkbox" style="width: auto" /> Rad
             nedjeljom</label
           >
         </div>
@@ -138,7 +134,6 @@ const empty = () => ({
   kraj_rv: '20:00',
   rad_nedjeljom: false,
   voditelj_oj: null,
-  ip: '',
 });
 const form = ref(empty());
 
@@ -171,7 +166,6 @@ function openEdit(b) {
     kraj_rv: b.kraj_rv,
     rad_nedjeljom: !!b.rad_nedjeljom,
     voditelj_oj: b.voditelj_oj,
-    ip: b.ip || '',
   };
   modalOpen.value = true;
 }
@@ -198,8 +192,17 @@ async function save() {
 
 async function remove(b) {
   if (!confirm('Obrisati poslovnicu?')) return;
-  await api.delete(`/branches/${b.id}`);
-  await load();
+  try {
+    await api.delete(`/branches/${b.id}`);
+    msg.value = 'Poslovnica obrisana';
+    msgType.value = 'success';
+    await load();
+  } catch (e) {
+    // e.g. 409: the branch has employees or recorded hours and cannot be deleted
+    msg.value = e.message;
+    msgType.value = 'error';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
 }
 
 onMounted(() => Promise.all([load(), loadUsers()]));

@@ -4,9 +4,9 @@
       <div class="row" style="justify-content:space-between;align-items:center">
         <div>
           <h1>Voditelj — pregled zaposlenika</h1>
-          <p class="muted" v-if="branch">{{ branch.naziv_oj }} ({{ branch.grad }})</p>
+          <p v-if="branch" class="muted">{{ branch.naziv_oj }} ({{ branch.grad }})</p>
         </div>
-        <div class="row" v-if="branch">
+        <div v-if="branch" class="row">
           <div class="field" style="min-width:100px">
             <label>Mjesec</label>
             <select v-model.number="month">

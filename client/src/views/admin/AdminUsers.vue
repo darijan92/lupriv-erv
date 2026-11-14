@@ -7,7 +7,7 @@
         <h2 style="margin:0">Korisnici</h2>
         <div class="row" style="align-items:center">
           <label class="checkbox-label">
-            <input type="checkbox" v-model="includeInactive" @change="load" />
+            <input v-model="includeInactive" type="checkbox" @change="load" />
             Prikaži neaktivne
           </label>
           <button type="button" @click="openCreate">Dodaj zaposlenika</button>
@@ -89,9 +89,9 @@
           </div>
         </div>
         <div class="row">
-          <div class="field"><label>Datum rođenja</label><input type="date" v-model="form.datum_rodjenja" /></div>
-          <div class="field"><label>Datum zaposlenja</label><input type="date" v-model="form.datum_zaposlenja" /></div>
-          <div class="field"><label>Datum odlaska</label><input type="date" v-model="form.datum_odlaska" /></div>
+          <div class="field"><label>Datum rođenja</label><input v-model="form.datum_rodjenja" type="date" /></div>
+          <div class="field"><label>Datum zaposlenja</label><input v-model="form.datum_zaposlenja" type="date" /></div>
+          <div class="field"><label>Datum odlaska</label><input v-model="form.datum_odlaska" type="date" /></div>
         </div>
         <div class="actions">
           <button type="submit">Spremi</button>
@@ -184,8 +184,17 @@ async function save() {
 
 async function remove(u) {
   if (!confirm(`Obrisati ${u.username}?`)) return
-  await api.delete(`/users/${u.id}`)
-  await load()
+  try {
+    await api.delete(`/users/${u.id}`)
+    msg.value = 'Korisnik obrisan'
+    msgType.value = 'success'
+    await load()
+  } catch (e) {
+    // e.g. 409: the employee has recorded hours and cannot be deleted
+    msg.value = e.message
+    msgType.value = 'error'
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
 }
 
 onMounted(() => Promise.all([load(), loadLookups()]))

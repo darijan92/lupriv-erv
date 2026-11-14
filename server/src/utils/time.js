@@ -119,10 +119,13 @@ function splitIntervals(radniSatiStrOrArr) {
   };
 }
 
+/**
+ * Client IP as seen by Express. Relies on `app.set('trust proxy', N)` (TRUST_PROXY_HOPS)
+ * so X-Forwarded-For is only honoured for the configured number of proxy hops and
+ * cannot be spoofed by the client.
+ */
 function clientIp(req) {
-  const xf = req.headers['x-forwarded-for'];
-  if (xf) return String(xf).split(',')[0].trim();
-  let ip = req.socket?.remoteAddress || req.ip || '';
+  let ip = req.ip || req.socket?.remoteAddress || '';
   if (ip.startsWith('::ffff:')) ip = ip.slice(7);
   if (ip === '::1') ip = '127.0.0.1';
   return ip;
@@ -132,6 +135,21 @@ const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 function isValidHm(value) {
   return typeof value === 'string' && HHMM_RE.test(value);
+}
+
+/**
+ * Validate a stored radni_sati string: space-separated HH:mm values in start/end pairs.
+ * @returns {string|null} normalised string, or null when empty
+ * @throws {Error} when malformed
+ */
+function normalizeRadniSati(value) {
+  if (value == null) return null;
+  const parts = parseRadniSati(value);
+  if (!parts.length) return null;
+  if (parts.length % 2 !== 0 || !parts.every(isValidHm)) {
+    throw new Error('Radni sati moraju biti parovi HH:mm (npr. "07:00 15:00")');
+  }
+  return parts.join(' ');
 }
 
 module.exports = {
@@ -149,4 +167,5 @@ module.exports = {
   splitIntervals,
   clientIp,
   isValidHm,
+  normalizeRadniSati,
 };
