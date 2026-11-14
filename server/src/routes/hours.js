@@ -251,21 +251,20 @@ router.get(
         hoursService.getHoursForUserMonth(userId, month, year),
       ]);
       if (!user) return res.status(404).json({ error: 'Korisnik nije pronađen' });
-      const uname = user.username || userId;
+      // Goes into the download file name (Content-Disposition), so keep it to safe characters.
+      const uname = String(user.username || userId).replace(/[^\w.-]+/g, '_');
 
       if (format === 'csv') {
         const view = buildMonthView(hours, year, month);
         const header = 'Dan;Datum;Poslovnica;Radni sati;Odsustvo;Ukupno;Regularno;Dodatno;Noćna;Napomena\n';
         const lines = view.days
           .filter((r) => r.id)
-          .map((r) =>
-            [
-              r.dan, r.datum, r.naziv_oj, (r.radni_sati || []).join(' '),
-              r.odsustvo || '', r.ukupno, r.total, r.dodatno,
-              r.isNightShift ? 'da' : '', (r.napomena || '').replace(/;/g, ','),
-            ].join(';')
-          );
-        lines.push(`;;;;;Zbroj;${view.zbroj.ukupno};${view.zbroj.total};${view.zbroj.dodatno};;`);
+          .map((r) => [
+            r.dan, r.datum, r.naziv_oj, (r.radni_sati || []).join(' '),
+            r.odsustvo || '', r.ukupno, r.total, r.dodatno,
+            r.isNightShift ? 'da' : '', r.napomena || '',
+          ]);
+        lines.push(['', '', '', '', '', 'Zbroj', view.zbroj.ukupno, view.zbroj.total, view.zbroj.dodatno, '', '']);
         return sendCsv(res, `sati_${uname}_${month}_${year}.csv`, header, lines);
       }
 

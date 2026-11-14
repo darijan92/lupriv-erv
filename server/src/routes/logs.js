@@ -124,9 +124,7 @@ router.get('/auto-logout/export', authRequired, requireAdmin, async (req, res) =
 
     if (format === 'csv') {
       const header = 'Ljekarna;Ime Prezime;Broj automatskih odjava;U tekućem mjesecu;U prošlom mjesecu\n';
-      const lines = report.map((r) =>
-        [r.ljekarna, r.imePrezime, r.brojOdjava, r.tekuciMjesec, r.prosliMjesec].join(';')
-      );
+      const lines = report.map((r) => [r.ljekarna, r.imePrezime, r.brojOdjava, r.tekuciMjesec, r.prosliMjesec]);
       return sendCsv(res, 'automatske_odjave.csv', header, lines);
     }
 
