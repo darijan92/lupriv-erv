@@ -28,9 +28,9 @@ router.get('/users', authRequired, requireModeratorOrAdmin, async (req, res) => 
        FROM users WHERE branch_id=? ORDER BY ${nullsLastOrder('prezime')}, ${nullsLastOrder('ime')}`,
       [branch.id]
     );
-    // Branch IPs are only for admins.
+    // The legacy ip column is unused and never sent.
     const { ip: _ip, ...branchPublic } = branch;
-    res.json({ branch: req.user.role_id >= 3 ? branch : branchPublic, users });
+    res.json({ branch: branchPublic, users });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Greška' });

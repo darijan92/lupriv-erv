@@ -51,13 +51,6 @@ function assertSafeConfig(env = process.env) {
   );
 }
 
-/** Kiosk may trust a client-chosen branch id only when explicitly allowed (dev default). */
-function kioskAllowsExplicitBranch(env = process.env) {
-  const v = env.KIOSK_ALLOW_BRANCH_QUERY;
-  if (v == null || v === '') return !isProduction(env);
-  return v === '1' || v === 'true';
-}
-
 /** Number of reverse-proxy hops in front of the API (nginx = 1, Caddy + nginx = 2). */
 function trustProxyHops(env = process.env) {
   const n = Number(env.TRUST_PROXY_HOPS ?? 1);
@@ -88,7 +81,6 @@ module.exports = {
   isProduction,
   productionSecretProblems,
   assertSafeConfig,
-  kioskAllowsExplicitBranch,
   trustProxyHops,
   hoursEditLockDay,
   autoLogoutExtraMinutes,

@@ -261,9 +261,9 @@ curl -X POST -H "X-Auto-Logout-Secret: $AUTO_LOGOUT_SECRET" http://localhost:300
 - **Voditelj** vidi i uređuje samo zaposlenike poslovnice koju vodi (ili kojoj pripada), ne može mijenjati vlastite sate, a prošli mjesec može mijenjati samo do `HOURS_EDIT_LOCK_DAY`. dana u mjesecu (zadano 5, kao stari app). Admin nema ograničenja.
 - Svako dodavanje, uređivanje, brisanje i zaustavljanje sati od strane voditelja/admina zapisuje se u **Logovi** (tko, kome, datum, prije → poslije).
 - Korisnik ili poslovnica sa satima ne mogu se obrisati (sati se čuvaju): korisniku se postavlja datum odlaska. Odlazak i promjena uloge vrijede odmah, i za već prijavljene.
-- **Kiosk** (`KIOSK_ALLOW_BRANCH_QUERY=0`, produkcija): odabrana poslovnica prihvaća se samo ako je IP uređaja registriran IP te poslovnice. IP se registrira prijavom na stranici **Prijava** s odabranom poslovnicom i „Započni radno vrijeme” (kao u starom appu). S `=1` (dev) vjeruje se odabiru na uređaju.
+- **Kiosk:** poslovnica se odabire na uređaju (početna stranica ili **Prijava** s odabranom poslovnicom) i pamti u pregledniku (`localStorage`). IP adrese poslovnica se više ne koriste ni ne provjeravaju; stupac `branches.ip` ostaje u bazi radi starih podataka, ali ga aplikacija ne čita ni ne mijenja.
 - Prijava i kiosk: 10 neuspjelih pokušaja po korisniku/IP-u u 15 min → privremena blokada; poruka ne otkriva postoji li korisničko ime.
-- `TRUST_PROXY_HOPS`: 1 kad je ispred API-ja samo web nginx, 2 kad je ispred još Caddy (VPS). Pogrešna vrijednost znači krivi IP poslovnice.
+- `TRUST_PROXY_HOPS`: 1 kad je ispred API-ja samo web nginx, 2 kad je ispred još Caddy (VPS). Pogrešna vrijednost znači krivi IP klijenta u ograničenju pokušaja prijave.
 
 ### Testovi
 
@@ -278,7 +278,7 @@ npm run lint
 - [ ] `AUTO_LOGOUT_SECRET` postavljen
 - [ ] `TRUST_PROXY_HOPS=2` iza Caddyja
 - [ ] `CORS_ORIGIN=https://your.domain` (VPS)
-- [ ] `KIOSK_ALLOW_BRANCH_QUERY=0` (stvarna IP politika početne stranice)
+- [ ] Na svakom uređaju poslovnice jednom odabrati poslovnicu (pamti se u pregledniku)
 - [ ] Nakon importa dumpa: `npm run hash-passwords` (ili `docker compose exec api npm run hash-passwords`)
 - [ ] MySQL/API nisu javno publishani; phpMyAdmin off na VPS-u
 - [ ] HTTPS (Caddy) — vidi `deploy/`

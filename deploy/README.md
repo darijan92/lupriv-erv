@@ -34,7 +34,7 @@ npm run docker:up:dev
 ## VPS (kratki postupak)
 
 1. **Kopiraj projekt** (`rsync` / `git clone` / scp). Ne commitaj `.env` ni dumpe s PII.
-2. **`.env`** — kopiraj iz `.env.docker.example`, postavi jake tajne (`openssl rand -hex 32`), `CORS_ORIGIN=https://tvoja.domena`, `KIOSK_ALLOW_BRANCH_QUERY=0`, `TRUST_PROXY_HOPS=2`. API se ne pokreće dok su tajne zadane vrijednosti.
+2. **`.env`** — kopiraj iz `.env.docker.example`, postavi jake tajne (`openssl rand -hex 32`), `CORS_ORIGIN=https://tvoja.domena`, `TRUST_PROXY_HOPS=2`. API se ne pokreće dok su tajne zadane vrijednosti.
 3. **Pokreni stack:**
    ```bash
    docker compose up --build -d
@@ -60,7 +60,6 @@ docker compose exec -T mysql mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" --single-
 
 - [ ] `JWT_SECRET` / `AUTO_LOGOUT_SECRET` jaki i jedinstveni
 - [ ] `CORS_ORIGIN=https://your.domain`
-- [ ] `KIOSK_ALLOW_BRANCH_QUERY=0`
 - [ ] `TRUST_PROXY_HOPS=2` (Caddy → web → api); web je vezan na 127.0.0.1:8080
 - [ ] `ALLOW_INSECURE_DEFAULTS` nije postavljen
 - [ ] MySQL nije publishan na 0.0.0.0 (default compose)

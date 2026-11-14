@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { assertSafeConfig, kioskAllowsExplicitBranch, trustProxyHops } = require('../src/config');
+const { assertSafeConfig, trustProxyHops } = require('../src/config');
 
 const strong = 'x'.repeat(40);
 
@@ -28,12 +28,6 @@ test('dev and explicit override do not throw', () => {
   assert.doesNotThrow(() => assertSafeConfig({ NODE_ENV: 'production', ALLOW_INSECURE_DEFAULTS: '1' }));
 });
 
-test('kiosk explicit branch: on in dev, off in production unless set', () => {
-  assert.strictEqual(kioskAllowsExplicitBranch({}), true);
-  assert.strictEqual(kioskAllowsExplicitBranch({ NODE_ENV: 'production' }), false);
-  assert.strictEqual(kioskAllowsExplicitBranch({ NODE_ENV: 'production', KIOSK_ALLOW_BRANCH_QUERY: '1' }), true);
-  assert.strictEqual(kioskAllowsExplicitBranch({ KIOSK_ALLOW_BRANCH_QUERY: '0' }), false);
-});
 
 test('trust proxy hops default to 1', () => {
   assert.strictEqual(trustProxyHops({}), 1);

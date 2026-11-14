@@ -3,7 +3,6 @@ const pool = require('../db/pool');
 const { authRequired, requireAdmin } = require('../middleware/auth');
 const { buildOrderBy, likePattern, parseOrder } = require('../utils/sqlSort');
 const { validate } = require('../middleware/validate');
-const { isAdmin } = require('../utils/access');
 const { z } = require('zod');
 
 const hm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Vrijeme mora biti HH:mm');
@@ -17,13 +16,11 @@ const branchSchema = z.object({
   kraj_rv: hm,
   rad_nedjeljom: z.union([z.boolean(), z.coerce.number()]).optional(),
   voditelj_oj: z.union([z.coerce.number().int().positive(), z.literal(''), z.null()]).optional(),
-  ip: z.string().max(30).optional().nullable(),
 });
 const idParams = z.object({ id: z.coerce.number().int().positive() });
 
-/** Branch IPs are only for admins. */
-function forViewer(req, branch) {
-  if (isAdmin(req.user)) return branch;
+/** The legacy `ip` column is unused (branch is chosen per device), so it is never sent. */
+function forViewer(_req, branch) {
   const { ip: _ip, ...rest } = branch;
   return rest;
 }
@@ -77,8 +74,8 @@ router.post('/', authRequired, requireAdmin, validate({ body: branchSchema }), a
   try {
     const b = req.body;
     const [r] = await pool.query(
-      `INSERT INTO branches (sifra, naziv_oj, adresa, grad, zupanija, pocetak_rv, kraj_rv, rad_nedjeljom, voditelj_oj, ip)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO branches (sifra, naziv_oj, adresa, grad, zupanija, pocetak_rv, kraj_rv, rad_nedjeljom, voditelj_oj)
+       VALUES (?,?,?,?,?,?,?,?,?)`,
       [
         b.sifra,
         b.naziv_oj,
@@ -89,7 +86,6 @@ router.post('/', authRequired, requireAdmin, validate({ body: branchSchema }), a
         b.kraj_rv,
         b.rad_nedjeljom ? 1 : 0,
         b.voditelj_oj || null,
-        b.ip || null,
       ]
     );
     res.status(201).json({ id: r.insertId, success: 'Poslovnica kreirana' });
@@ -106,7 +102,7 @@ router.put('/:id', authRequired, requireAdmin, validate({ params: idParams, body
     const b = req.body;
     await pool.query(
       `UPDATE branches SET sifra=?, naziv_oj=?, adresa=?, grad=?, zupanija=?, pocetak_rv=?, kraj_rv=?,
-       rad_nedjeljom=?, voditelj_oj=?, ip=? WHERE id=?`,
+       rad_nedjeljom=?, voditelj_oj=? WHERE id=?`,
       [
         b.sifra,
         b.naziv_oj,
@@ -117,7 +113,6 @@ router.put('/:id', authRequired, requireAdmin, validate({ params: idParams, body
         b.kraj_rv,
         b.rad_nedjeljom ? 1 : 0,
         b.voditelj_oj || null,
-        b.ip || null,
         req.params.id,
       ]
     );

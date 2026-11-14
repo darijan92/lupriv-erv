@@ -86,10 +86,6 @@
         </div>
         <div class="row">
           <div class="field">
-            <label>IP (opcionalno, legacy)</label
-            ><input v-model="form.ip" placeholder="127.0.0.1" />
-          </div>
-          <div class="field">
             <label>Voditelj</label>
             <select v-model="form.voditelj_oj">
               <option :value="null">—</option>
@@ -138,7 +134,6 @@ const empty = () => ({
   kraj_rv: '20:00',
   rad_nedjeljom: false,
   voditelj_oj: null,
-  ip: '',
 });
 const form = ref(empty());
 
@@ -171,7 +166,6 @@ function openEdit(b) {
     kraj_rv: b.kraj_rv,
     rad_nedjeljom: !!b.rad_nedjeljom,
     voditelj_oj: b.voditelj_oj,
-    ip: b.ip || '',
   };
   modalOpen.value = true;
 }

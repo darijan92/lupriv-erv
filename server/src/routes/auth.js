@@ -11,7 +11,6 @@ const {
   hashPassword,
 } = require('../services/authService');
 const { startWork, withUserLock, closeStaleSessions } = require('../services/hoursService');
-const { writeLog, b } = require('../services/auditLog');
 const { clientIp, todayDate } = require('../utils/time');
 const { nullsLastOrder } = require('../utils/sqlSort');
 
@@ -59,16 +58,6 @@ router.post('/login', validate({ body: loginSchema }), async (req, res) => {
       const [branches] = await pool.query('SELECT * FROM branches WHERE id=?', [branch_id]);
       const branch = branches[0];
       if (!branch) return res.status(400).json({ error: 'Poslovnica nije pronađena' });
-
-      // Logging in with a branch registers this device's IP as the branch kiosk IP (legacy behaviour).
-      if (branch.ip !== ip) {
-        await writeLog({
-          userId: user.id,
-          branchId: branch.id,
-          content: `Korisnik ${b(`${user.ime} ${user.prezime}`)} je promijenio IP adresu OJ ${b(branch.naziv_oj)} (${b(branch.ip || '-')} → ${b(ip)}).`,
-        });
-        await pool.query('UPDATE branches SET ip=? WHERE id=?', [ip, branch.id]);
-      }
 
       const started = await withUserLock(user.id, async (conn) => {
         const { open } = await closeStaleSessions(user.id, conn);

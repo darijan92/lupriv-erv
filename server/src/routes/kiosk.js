@@ -7,7 +7,6 @@ const pool = require('../db/pool');
 const { validate } = require('../middleware/validate');
 const { clientIp, nowTime, todayDate, appendPeriod } = require('../utils/time');
 const { nullsLastOrder } = require('../utils/sqlSort');
-const { kioskAllowsExplicitBranch } = require('../config');
 
 const router = express.Router();
 
@@ -20,32 +19,14 @@ class KioskError extends Error {
 }
 
 /**
- * Resolve kiosk branch.
- *  - KIOSK_ALLOW_BRANCH_QUERY=1 (dev default): an explicit branch id from the device is trusted.
- *  - KIOSK_ALLOW_BRANCH_QUERY=0 (production default): the explicit id is accepted only when this
- *    device's IP is the branch's registered IP (set by logging in at /login with that branch);
- *    otherwise the branch is found by IP, as in the old app's CheckIP middleware.
+ * Resolve the kiosk branch from the id the device stored (browser localStorage, chosen on the
+ * kiosk page or at Prijava). Branch IP addresses are no longer used.
  */
 async function resolveBranch(req, explicitId) {
-  const id = explicitId || req.query.branchId || req.body?.branch_id || req.body?.branchId;
-  const ip = clientIp(req);
-  if (id) {
-    const [rows] = await pool.query('SELECT * FROM branches WHERE id=?', [id]);
-    const branch = rows[0];
-    if (branch && (kioskAllowsExplicitBranch() || branch.ip === ip)) return branch;
-    if (branch) {
-      throw new KioskError(
-        403,
-        `Ovaj uređaj (${ip}) nije registriran za poslovnicu ${branch.naziv_oj}. ` +
-          'Voditelj ili zaposlenik se treba prijaviti na stranici Prijava s odabranom poslovnicom.',
-        { needsBranch: true, clientIp: ip }
-      );
-    }
-  }
-  const [rows] = await pool.query(
-    `SELECT * FROM branches WHERE ip=? ORDER BY ${nullsLastOrder('updated_at', 'updated_at', 'DESC')} LIMIT 1`,
-    [ip]
-  );
+  const raw = explicitId || req.query.branchId || req.body?.branch_id || req.body?.branchId;
+  const id = Number(raw);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  const [rows] = await pool.query('SELECT * FROM branches WHERE id=?', [id]);
   return rows[0] || null;
 }
 
@@ -71,9 +52,7 @@ router.get('/', async (req, res) => {
     if (!branch) {
       return res.status(404).json({
         error: 'Poslovnica nije odabrana. Odaberite poslovnicu ispod.',
-        needsLogin: true,
         needsBranch: true,
-        clientIp: clientIp(req),
       });
     }
     const [[posts], [active]] = await Promise.all([
@@ -98,7 +77,6 @@ router.get('/', async (req, res) => {
         ...h,
         imePrezime: `${h.ime} ${h.prezime}`,
       })),
-      clientIp: clientIp(req),
     });
   } catch (e) {
     sendError(res, e);
